@@ -39,6 +39,7 @@ async def register_handlers(redis: Redis
         # TODO: добавить шаблонную задачу для проверки работы
         # await _handle_generate_gp_task('test prompt', redis)
         task_handlers['generate_gp'] = _handle_generate_gp_task
+        # task_handlers['generate_gp_spc'] = _handle_generate_gp_task
         logger.info("✅ Обработчик generate_gp зарегистрирован")
     except ImportError:
         logger.warning(
