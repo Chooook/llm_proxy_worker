@@ -1,0 +1,13 @@
+[project]
+name = "llm-worker"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aioredis>=2.0.1",
+    "asyncio-atexit>=1.0.1",
+    "asyncpg>=0.30.0",
+    "llama-cpp-python>=0.3.9",
+    "loguru>=0.7.3",
+]
