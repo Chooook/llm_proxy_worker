@@ -1,57 +1,69 @@
 import os
-from typing import Awaitable, Callable, Dict
+from typing import Awaitable, Callable
 
-from aioredis import Redis
 from loguru import logger
 
-from handlers.generate_gp_handler import _handle_generate_gp_task
-from handlers.generate_local_handler import _handle_generate_local_task
+from handlers.dummy_handler import _dummy_handler
 from settings import settings
 
 
-async def register_handlers(redis: Redis
-        ) -> Dict[str, Callable[[str, Redis], Awaitable[None]]]:
-    """Регистрирует доступные обработчики задач"""
-    task_handlers: Dict[str, Callable[[str, Redis], Awaitable[None]]] = {}
+async def register_handlers(
+        ) -> dict[str, Callable[[dict], Awaitable[str]]]:
+    """Register available handlers"""
+
+    task_handlers: dict[str, Callable[[dict], Awaitable[str]]] = {
+        'dummy': _dummy_handler}
+    logger.info('✅ Обработчик dummy зарегистрирован')
 
     try:
-        import llama_cpp
+        test_task_local = {'prompt': 'test prompt'}
+        from handlers.generate_local_handler import _handle_generate_local_task
         if not os.path.exists(settings.MODEL_PATH):
             raise FileNotFoundError
-        # TODO: добавить шаблонную задачу для проверки работы
-        # await _handle_generate_local_task('test prompt', redis)
+        await _handle_generate_local_task(test_task_local)
         task_handlers['generate_local'] = _handle_generate_local_task
-        logger.info("✅ Обработчик generate-local зарегистрирован")
+        logger.info('✅ Обработчик generate-local зарегистрирован')
+
     except ImportError:
         logger.warning(
-            "⚠️ Обработчик generate_local недоступен: "
-            "зависимости не установлены")
+            '⚠️ Обработчик generate_local недоступен: '
+            'зависимости не установлены')
     except FileNotFoundError:
         logger.warning(
-            "⚠️ Обработчик generate_local недоступен: "
-            f"модель не найдена по пути: {settings.MODEL_PATH}")
+            '⚠️ Обработчик generate_local недоступен: '
+            f'модель не найдена по пути: {settings.MODEL_PATH}')
     except Exception as e:
         logger.warning(
-            f"⚠️ LLM обработчик generate_local недоступен: {e}")
+            f'⚠️ LLM обработчик generate_local недоступен: {e}')
 
     try:
-        import asyncpg
-        # TODO: добавить шаблонную задачу для проверки работы
-        # await _handle_generate_gp_task('test prompt', redis)
-        task_handlers['generate_gp'] = _handle_generate_gp_task
-        # task_handlers['generate_gp_spc'] = _handle_generate_gp_task
-        logger.info("✅ Обработчик generate_gp зарегистрирован")
+        from handlers.generate_gp_handler import _handle_generate_gp_task
+
+        task_types = ['generate_pm_test', 'generate_spc_test',
+                      'generate_oapso_test', 'search_test']
+        for task_type in task_types:
+            test_task = {'prompt': 'test prompt', 'task_type': task_type}
+            handler = task_type.replace('_test', '')
+            try:
+                await _handle_generate_gp_task(test_task)
+                task_handlers[handler] = _handle_generate_gp_task
+                logger.info(f'✅ Обработчик {handler} зарегистрирован')
+            except RuntimeError:
+                raise
+            except Exception as e:
+                logger.warning(
+                    f'⚠️ Обработчик {handler} недоступен: {e}')
+
     except ImportError:
         logger.warning(
-            "⚠️ LLM обработчик generate_gp недоступен: "
-            "зависимости не установлены")
+            '⚠️ Обработчики на основе очереди GP недоступны: '
+            'зависимости не установлены')
     except RuntimeError:
         logger.warning(
-            "⚠️ LLM обработчик generate_gp недоступен: "
-            "тикет kerberos недействителен")
+            '⚠️ Обработчики на основе очереди GP недоступны: '
+            'тикет kerberos недействителен')
     except Exception as e:
         logger.warning(
-            f"⚠️ LLM обработчик generate_gp недоступен: {e}")
-
+            f'⚠️ Обработчики на основе очереди GP недоступны: {e}')
 
     return task_handlers
