@@ -45,7 +45,7 @@ async def register_handlers(
             test_task = {'prompt': 'test prompt', 'task_type': task_type}
             handler = task_type.replace('_test', '')
             try:
-                await _handle_generate_gp_task(test_task)
+                await _handle_generate_gp_task(test_task, timeout_secs=15)
                 task_handlers[handler] = _handle_generate_gp_task
                 logger.info(f'✅ Обработчик {handler} зарегистрирован')
             except RuntimeError:

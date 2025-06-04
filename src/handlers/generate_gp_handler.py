@@ -6,7 +6,7 @@ from loguru import logger
 from utils.gp_utils import get_task_result, set_task_to_query
 
 
-async def _handle_generate_gp_task(task: dict) -> str:
+async def _handle_generate_gp_task(task: dict, timeout_secs: int = 150) -> str:
     """Handle task with GP sub-queue"""
 
     try:
@@ -17,7 +17,7 @@ async def _handle_generate_gp_task(task: dict) -> str:
         raise RuntimeError(f'❌ Ошибка при постановке задачи в очередь GP: {e}')
 
     result = None
-    for _ in range(30):  # 2.5 min wait
+    for _ in range(timeout_secs // 5):  # 2.5 min wait by default
         try:
             result = await get_task_result(gp_task_id)
             if result is None:
