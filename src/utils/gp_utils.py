@@ -11,18 +11,33 @@ from loguru import logger
 from settings import settings
 
 USERNAME = os.getenv('USERNAME_GP')
-PASSWORD = os.getenv('PASSWORD_GP', '')
-SAFE_PASSWORD = quote_plus(PASSWORD)
+PASSWORD = quote_plus(os.getenv('PASSWORD_GP', ''))
 HOST = settings.GP_HOST
 PORT = settings.GP_PORT
 DATABASE = settings.GP_DATABASE
+SCHEMA = settings.GP_SCHEMA
 
 pool: Pool | None = None
 
 
-async def run_query(query):
+async def set_task_to_query(task:str):
+    set_task_query = f'SELECT {SCHEMA}.f_ask_quest(%s);'
+    gp_task_id = await run_query(set_task_query, (task,))
+    return gp_task_id[0][0]
+
+
+async def get_task_result(gp_task_id: int):
+    get_answer_query = f'SELECT {SCHEMA}.f_get_answer_by_id(%s);'
+    not_valid_result = ['Вопрос пользователя', 'еще не обработан']
+    result = await run_query(get_answer_query, (gp_task_id,))
+    if any(phrase in result[0][0].strip() for phrase in not_valid_result):
+        result = None
+    return result
+
+
+async def run_query(query, params=()):
     async with get_pg_conn() as conn:
-        result = await conn.fetch(query)
+        result = await conn.fetch(query, *params)
         return result
 
 
@@ -46,12 +61,11 @@ async def __init_db():
     if pool is not None:
         return
     pool = await asyncpg.create_pool(
-        dsn=f'postgresql://{USERNAME}:{SAFE_PASSWORD}@{HOST}:{PORT}/'
+        dsn=f'postgresql://{USERNAME}:{PASSWORD}@{HOST}:{PORT}/'
             f'{DATABASE}?client_encoding=utf8',
         min_size=1,
         max_size=5,
-        max_inactive_connection_lifetime=30
-    )
+        max_inactive_connection_lifetime=30)
     logger.info("✅ Connection pool GP создан")
     __register_cleanup_handlers()
 
