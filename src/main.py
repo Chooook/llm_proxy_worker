@@ -14,7 +14,7 @@ logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 async def main():
 
     if len(task_handlers) - 1 == 0:  # -1 for dummy handler
-        logger.error('❌ Доступен только dummy обработчик!')
+        logger.warning('❌ Доступен только dummy обработчик!')
     elif not task_handlers:
         error_msg = '❌ Нет доступных обработчиков задач!'
         logger.error(error_msg)
@@ -54,7 +54,7 @@ async def __process_task(task_id: str):
         handler = await __get_handler(task, task_id)
 
     except Exception as e:
-        logger.warning(str(e))
+        logger.warning(f'⚠️ Ошибка при получении задачи {task_id}: {e}')
         await mark_task_failed(redis, task_id, str(e))
         raise
 
@@ -69,7 +69,7 @@ async def __process_task(task_id: str):
         task['result'] = result
         await redis.setex(f'task:{task_id}', 86400, json.dumps(task))
         await redis.lrem('processing_queue', 1, task_id)
-        logger.info(f'✅ Задача {task_id} выполнена')
+        logger.success(f'✅ Задача {task_id} выполнена')
 
     except Exception as e:
         logger.error(f'⚠️ Ошибка обработки задачи {task_id}: {str(e)}')

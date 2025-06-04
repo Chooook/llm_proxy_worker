@@ -48,7 +48,7 @@ async def get_pg_conn():
         try:
             await __init_db()
         except Exception as e:
-            logger.exception(f"⚠️ Ошибка при инициализации PG соединения: {e}")
+            logger.error(f"⚠️ Ошибка при инициализации PG соединения: {e}")
             raise
 
     async with pool.acquire() as conn:
