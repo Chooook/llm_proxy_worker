@@ -49,16 +49,10 @@ async def __process_task(task_id: str):
     try:
         task_data = await redis.get(f'task:{task_id}')
         if not task_data:
-            raise RuntimeError(f'⚠️ Задача {task_id} не найдена')
+            raise KeyError('⚠️ Задача не найдена')
         task: dict = json.loads(task_data)
-        handler = await __get_handler(task, task_id)
+        handler = await __get_handler(task)
 
-    except Exception as e:
-        logger.warning(f'⚠️ Ошибка при получении задачи {task_id}: {e}')
-        await mark_task_failed(redis, task_id, str(e))
-        raise
-
-    try:
         prompt = task['prompt']
         logger.debug(f'🧠 Получен prompt: {prompt}')
 
@@ -71,27 +65,32 @@ async def __process_task(task_id: str):
         await redis.lrem('processing_queue', 1, task_id)
         logger.success(f'✅ Задача {task_id} выполнена')
 
+    except KeyError as e:
+        logger.error(f'⚠️ Ошибка при запуске задачи {task_id}: {e}')
+        raise
+
     except Exception as e:
-        logger.error(f'⚠️ Ошибка обработки задачи {task_id}: {str(e)}')
-        retries = await redis.hincrby(f'task:{task_id}', 'retries', 1)
-        if retries > 3:
-            await redis.rpush('dead_letters', task_id)
+        logger.error(f'⚠️ Ошибка обработки задачи {task_id}: {e}')
+        retries = task['retries'] = task.get('retries', 0) + 1
+        await redis.setex(f'task:{task_id}', 86400, json.dumps(task))
+        if retries > 2:
             await redis.lrem('processing_queue', 1, task_id)
-            await mark_task_failed(
-                redis, task_id, '⚠️ Превышено число попыток')
+            await redis.rpush('dead_letters', task_id)
+            error_msg = '⚠️ Задача не выполнена, превышено количество попыток'
+            await mark_task_failed(redis, task_id, error_msg)
+            await asyncio.sleep(1)
         else:
             await redis.lrem('processing_queue', 1, task_id)
             await redis.rpush('task_queue', task_id)
-        raise
+            await asyncio.sleep(1)
 
 
-async def __get_handler(task, task_id):
+async def __get_handler(task):
     task_type = task['task_type']
     handler = task_handlers.get(task_type)
 
     if not handler:
-        raise KeyError(f'⚠️ Задача {task_id} не выполнена, тип '
-                       f'задачи {task_type} не поддерживается')
+        raise RuntimeError(f'⚠️ Тип задачи {task_type} не поддерживается')
     return handler
 
 
