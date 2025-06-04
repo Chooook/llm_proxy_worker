@@ -56,19 +56,24 @@ async def process_task(
         return
 
     task = json.loads(task_data)
-    handler = handlers.get(task['type'])
+    handler = handlers.get(task['task_type'])
 
     if not handler:
         await mark_task_failed(
             redis,
             task_id,
-            f"Неподдерживаемый тип задачи: {task['type']}"
+            f"Неподдерживаемый тип задачи: {task['task_type']}"
         )
         logger.warning(f'⚠️ Задача {task_id} не выполнена, тип '
-                       f'задачи {task["type"]} не поддерживается')
+                       f'задачи {task["task_type"]} не поддерживается')
         return
 
     try:
+        # TODO: отдавать в handler задачу, чтобы он не работал с redis,
+        #  это позволит сделать тестирование проще и изолировать логику,
+        #  придется перенести логику обработки ошибок сюда, но так
+        #  правильнее, к тому же handler`ы станут меньше по объему и будут
+        #  работать только со своими зависимостями
         await handler(task_id, redis)
     except Exception as e:
         logger.error(f"⚠️ Ошибка обработки задачи {task_id}: {str(e)}")
