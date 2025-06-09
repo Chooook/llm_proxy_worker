@@ -12,6 +12,7 @@ logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
 
 async def main():
+    task_handlers = await register_handlers()
 
     if len(task_handlers) - 1 == 0:  # -1 for dummy handler
         logger.warning('❌ Доступен только dummy обработчик!')
@@ -22,12 +23,12 @@ async def main():
 
     asyncio.create_task(cleanup_dlq(redis))
     try:
-        await __worker_loop()
+        await __worker_loop(task_handlers)
     finally:
         await redis.close()
 
 
-async def __worker_loop():
+async def __worker_loop(task_handlers):
 
     await recover_tasks(redis)
 
@@ -36,14 +37,14 @@ async def __worker_loop():
             task_id = await redis.brpoplpush(
                 'task_queue', 'processing_queue', timeout=0)
             logger.info(f'📥 Получена задача: {task_id}')
-            await __process_task(task_id)
+            await __process_task(task_id, task_handlers)
 
         except Exception as e:
             logger.error(f'⚠️ Ошибка в worker: {e}')
             await asyncio.sleep(1)
 
 
-async def __process_task(task_id: str):
+async def __process_task(task_id: str, task_handlers):
     """Handle task"""
 
     try:
@@ -51,7 +52,12 @@ async def __process_task(task_id: str):
         if not task_data:
             raise KeyError('⚠️ Задача не найдена')
         task: dict = json.loads(task_data)
-        handler = await __get_handler(task)
+    except Exception as e:
+        logger.error(f'⚠️ Ошибка при запуске задачи {task_id}: {e}')
+        raise
+
+    try:
+        handler = await __get_handler(task, task_handlers)
 
         prompt = task['prompt']
         logger.debug(f'🧠 Получен prompt: {prompt}')
@@ -64,10 +70,6 @@ async def __process_task(task_id: str):
         await redis.setex(f'task:{task_id}', 86400, json.dumps(task))
         await redis.lrem('processing_queue', 1, task_id)
         logger.success(f'✅ Задача {task_id} выполнена')
-
-    except KeyError as e:
-        logger.error(f'⚠️ Ошибка при запуске задачи {task_id}: {e}')
-        raise
 
     except Exception as e:
         logger.error(f'⚠️ Ошибка обработки задачи {task_id}: {e}')
@@ -85,7 +87,7 @@ async def __process_task(task_id: str):
             await asyncio.sleep(1)
 
 
-async def __get_handler(task):
+async def __get_handler(task, task_handlers):
     task_type = task['task_type']
     handler = task_handlers.get(task_type)
 
@@ -99,5 +101,4 @@ if __name__ == '__main__':
         f'redis://{settings.HOST}:{settings.REDIS_PORT}/{settings.REDIS_DB}',
         decode_responses=True
     )
-    task_handlers = asyncio.run(register_handlers())
     asyncio.run(main())

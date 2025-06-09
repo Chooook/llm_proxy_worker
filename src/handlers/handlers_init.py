@@ -8,7 +8,7 @@ from settings import settings
 
 
 async def register_handlers(
-        ) -> dict[str, Callable[[dict], Awaitable[str]]]:
+) -> dict[str, Callable[[dict], Awaitable[str]]]:
     """Register available handlers"""
 
     task_handlers: dict[str, Callable[[dict], Awaitable[str]]] = {
@@ -39,13 +39,17 @@ async def register_handlers(
     try:
         from handlers.generate_gp_handler import _handle_generate_gp_task
 
-        task_types = ['generate_pm_test', 'generate_spc_test',
-                      'generate_oapso_test', 'search_test']
-        for task_type in task_types:
+        gp_task_types = [
+            'generate_pm_test',
+            'generate_spc_test',
+            'generate_oapso_test',
+            'search_test'
+        ]
+        for task_type in gp_task_types:
             test_task = {'prompt': 'test prompt', 'task_type': task_type}
             handler = task_type.replace('_test', '')
             try:
-                await _handle_generate_gp_task(test_task, timeout_secs=15)
+                await _handle_generate_gp_task(test_task, timeout_secs=30)
                 task_handlers[handler] = _handle_generate_gp_task
                 logger.info(f'✅ Обработчик {handler} зарегистрирован')
             except RuntimeError:
@@ -58,10 +62,9 @@ async def register_handlers(
         logger.warning(
             '⚠️ Обработчики на основе очереди GP недоступны: '
             'зависимости не установлены')
-    except RuntimeError:
+    except RuntimeError as e:
         logger.warning(
-            '⚠️ Обработчики на основе очереди GP недоступны: '
-            'тикет kerberos недействителен')
+            f'⚠️ Обработчики на основе очереди GP недоступны: {e}')
     except Exception as e:
         logger.warning(
             f'⚠️ Обработчики на основе очереди GP недоступны: {e}')

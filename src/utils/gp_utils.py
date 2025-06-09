@@ -21,17 +21,19 @@ pool: Pool | None = None
 
 
 async def set_task_to_query(task:str):
-    set_task_query = f'SELECT {SCHEMA}.f_ask_quest(%s);'
+    set_task_query = f'SELECT {SCHEMA}.f_ask_quest($1);'
     gp_task_id = await run_query(set_task_query, (task,))
     return gp_task_id[0][0]
 
 
 async def get_task_result(gp_task_id: int):
-    get_answer_query = f'SELECT {SCHEMA}.f_get_answer_by_id(%s);'
+    get_answer_query = f'SELECT {SCHEMA}.f_get_answer_by_id($1);'
     not_valid_result = ['Вопрос пользователя', 'еще не обработан']
     result = await run_query(get_answer_query, (gp_task_id,))
     if any(phrase in result[0][0].strip() for phrase in not_valid_result):
         result = None
+    else:
+        result = result[0][0].strip()
     return result
 
 
@@ -79,6 +81,7 @@ async def __close_db():
     if pool:
         await pool.close()
         logger.info("✅ Connection pool закрыт")
+        pool = None
 
 
 def __check_kerberos_ticket():
