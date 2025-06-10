@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime, timezone
 
 import aioredis
 from loguru import logger
@@ -63,10 +64,11 @@ async def __process_task(task_id: str, task_handlers):
         logger.debug(f'🧠 Получен prompt: {prompt}')
 
         result = await handler(task)
-        logger.debug(f'🧠 Результат: {result}')
-
+        task['finished_at'] = datetime.now(timezone.utc).isoformat()
         task['status'] = 'completed'
         task['result'] = result
+        logger.debug(f'🧠 Результат: {result}')
+
         await redis.setex(f'task:{task_id}', 86400, json.dumps(task))
         await redis.lrem('processing_queue', 1, task_id)
         logger.success(f'✅ Задача {task_id} выполнена')
