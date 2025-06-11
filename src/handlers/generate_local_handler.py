@@ -1,18 +1,17 @@
 from llama_cpp import (ChatCompletionRequestSystemMessage,
                        ChatCompletionRequestUserMessage, Llama)
-from loguru import logger
 
 from settings import settings
 
 system_prompt = 'Ты — помощник, который даёт краткие ответы.'
 
 
-async def _handle_generate_local_task(task: dict) -> str:
+def _handle_generate_local_task(task: dict) -> str:
     """Handle task with local model inference"""
 
     # lazy model inference:
     if not hasattr(_handle_generate_local_task, 'llm'):
-        _handle_generate_local_task.llm = await load_model()
+        _handle_generate_local_task.llm = load_model()
 
     prompt = task['prompt']
     system_message = ChatCompletionRequestSystemMessage(
@@ -32,7 +31,7 @@ async def _handle_generate_local_task(task: dict) -> str:
     return output['choices'][0]['message']['content'].strip()
 
 
-async def load_model() -> Llama:
+def load_model() -> Llama:
     try:
         model = Llama(
             model_path=settings.MODEL_PATH,
@@ -41,7 +40,6 @@ async def load_model() -> Llama:
             n_batch=512,
             verbose=False
         )
-        logger.info('✅ Локальная модель LLM инициализирована')
         return model
     except Exception as e:
         raise RuntimeError(
