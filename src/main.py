@@ -11,9 +11,23 @@ from utils.redis_utils import cleanup_dlq, mark_task_failed, recover_tasks
 
 logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
+HANDLERS = {
+    'dummy_handler':
+        'handlers.dummy_handler:_dummy_handler',
+    'generate_local':
+        'handlers.generate_local_handler:_handle_generate_local_task',
+# FIXME: убрать использование KNOWLEDGE_VECTOR_DATABASE и reranker в
+#  generate_pm, передавать в функцию только prompt
+# from rag import answer_with_rag, KNOWLEDGE_VECTOR_DATABASE, reranker
+    'generate_pm':
+        'rag:answer_with_rag',
+    'generate_spc':
+        'spc_fast.multi_agent.main:run_agent',
+}
+
 
 async def main():
-    task_handlers = await register_handlers()
+    task_handlers = register_handlers(HANDLERS)
 
     if len(task_handlers) - 1 == 0:  # -1 for dummy handler
         logger.warning('❌ Доступен только dummy обработчик!')
@@ -58,12 +72,13 @@ async def __process_task(task_id: str, task_handlers):
         raise
 
     try:
-        handler = await __get_handler(task, task_handlers)
+        handler = __get_handler(task, task_handlers)
 
         prompt = task['prompt']
         logger.debug(f'🧠 Получен prompt: {prompt}')
 
-        result = await handler(task)
+        result = handler(task)
+
         task['finished_at'] = datetime.now(timezone.utc).isoformat()
         task['status'] = 'completed'
         task['result'] = result
@@ -89,7 +104,7 @@ async def __process_task(task_id: str, task_handlers):
             await asyncio.sleep(1)
 
 
-async def __get_handler(task, task_handlers):
+def __get_handler(task, task_handlers):
     task_type = task['task_type']
     handler = task_handlers.get(task_type)
 
