@@ -1,34 +1,36 @@
 from llama_cpp import (ChatCompletionRequestSystemMessage,
                        ChatCompletionRequestUserMessage, Llama)
 
+from schemas.answer import Answer
+from schemas.task import Task
 from settings import settings
 
 system_prompt = 'Ты — помощник, который даёт краткие ответы.'
 
 
-def _handle_generate_local_task(task: dict) -> str:
+def handle_task_with_local_model(task: Task) -> Answer:
     """Handle task with local model inference"""
 
     # lazy model inference:
-    if not hasattr(_handle_generate_local_task, 'llm'):
-        _handle_generate_local_task.llm = load_model()
+    if not hasattr(handle_task_with_local_model, 'llm'):
+        handle_task_with_local_model.llm = load_model()
 
-    prompt = task['prompt']
     system_message = ChatCompletionRequestSystemMessage(
         role='system',
         content=system_prompt)
     user_message = ChatCompletionRequestUserMessage(
         role='user',
-        content=prompt)
+        content=task.prompt)
 
     try:
-        output = _handle_generate_local_task.llm.create_chat_completion(
+        output = handle_task_with_local_model.llm.create_chat_completion(
             messages=[system_message, user_message], max_tokens=512)
     except Exception as e:
         raise RuntimeError(
             f'⚠️ Ошибка обработки с помощью локальной модели: {str(e)}')
 
-    return output['choices'][0]['message']['content'].strip()
+    answer = Answer(text=output['choices'][0]['message']['content'].strip())
+    return answer
 
 
 def load_model() -> Llama:
