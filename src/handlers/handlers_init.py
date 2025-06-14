@@ -3,8 +3,11 @@ from typing import Callable
 
 from loguru import logger
 
+from schemas.answer import Answer
+from schemas.task import Task
 
-def import_handler(import_string: str) -> Callable[[dict], str]:
+
+def import_handler(import_string: str) -> Callable[[Task], Answer]:
     """Import awaitable function by string 'module:func'"""
     module_name, func_name = import_string.split(':')
     module = importlib.import_module(module_name)
@@ -12,10 +15,10 @@ def import_handler(import_string: str) -> Callable[[dict], str]:
 
 
 def register_handlers(
-        handlers_list: dict[str, str]) -> dict[str, Callable[[dict], str]]:
+        handlers_list: dict[str, str]) -> dict[str, Callable[[Task], Answer]]:
     """Verify and register handlers"""
-    test_task = {'prompt': 'Привет'}
-    verified_handlers: dict[str, Callable[[dict], str]] = {}
+    test_task = Task(prompt='Привет')
+    verified_handlers: dict[str, Callable[[Task], Answer]] = {}
     for handler_name, handler_func in handlers_list.items():
         try:
             handler = import_handler(handler_func)

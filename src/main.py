@@ -1,11 +1,13 @@
 import asyncio
-import json
 from datetime import datetime, timezone
+from typing import Callable
 
 import aioredis
 from loguru import logger
 
 from handlers.handlers_init import register_handlers
+from schemas.answer import Answer
+from schemas.task import Task
 from settings import settings
 from utils.redis_utils import cleanup_dlq, mark_task_failed, recover_tasks
 

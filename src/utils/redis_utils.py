@@ -1,8 +1,11 @@
 import asyncio
-import json
+from datetime import datetime, timezone
 
 from aioredis import Redis
 from loguru import logger
+
+from schemas.answer import Answer
+from schemas.task import Task
 
 
 async def recover_tasks(redis: Redis):
@@ -18,10 +21,11 @@ async def recover_tasks(redis: Redis):
 async def mark_task_failed(redis: Redis, task_id: str, error_msg: str):
     task_data = await redis.get(f'task:{task_id}')
     if task_data:
-        task = json.loads(task_data)
-        task['status'] = 'failed'
-        task['error'] = error_msg
-        await redis.setex(f'task:{task_id}', 86400, json.dumps(task))
+        task = Task.model_validate_json(task_data)
+        task.status = 'failed'
+        task.finished_at = datetime.now(timezone.utc).isoformat()
+        task.error = Answer(text=error_msg)
+        await redis.setex(f'task:{task_id}', 86400, task.model_dump_json())
 
 
 async def cleanup_dlq(redis: Redis):
