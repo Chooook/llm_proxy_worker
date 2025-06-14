@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 
-from aioredis import Redis
+from redis.asyncio import Redis
 from loguru import logger
 
 from schemas.answer import Answer
@@ -38,4 +38,3 @@ async def cleanup_dlq(redis: Redis):
             for task_id in tasks:
                 await redis.delete(f'task:{task_id}')
             await redis.delete('dead_letters')
-        await asyncio.sleep(3600)

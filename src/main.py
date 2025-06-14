@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Callable
 
-import aioredis
+from redis.asyncio import Redis
 from loguru import logger
 
 from handlers import register_handlers
@@ -131,8 +131,8 @@ async def __handle_task_error(task_id: str, task: Task, e: Exception):
 
 
 if __name__ == '__main__':
-    redis = aioredis.Redis.from_url(
-        f'redis://{settings.HOST}:{settings.REDIS_PORT}/{settings.REDIS_DB}',
-        decode_responses=True
-    )
+    redis = Redis(host=settings.HOST,
+                  port=settings.REDIS_PORT,
+                  db=settings.REDIS_DB,
+                  decode_responses=True)
     asyncio.run(__main())
