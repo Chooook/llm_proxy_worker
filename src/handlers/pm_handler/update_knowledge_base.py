@@ -40,7 +40,7 @@ markdown_documents_2 = load_markdown_files(base_2_0_directory)
 # Объединение загруженных документов
 bz1_documents = pdf_documents + [doc for sublist in markdown_documents_1 for doc in sublist]
 
-EMBEDDING_MODEL_NAME = "models/intfloat"
+EMBEDDING_MODEL_NAME = 'models/intfloat'
 
 def split_documents(
     chunk_size: int,
@@ -91,11 +91,11 @@ bm25_retriever = BM25Retriever.from_documents(
 bm25_retriever.k = 10
 
 # Создание готового bm25 ретривера
-with open("bm25_retriever.pkl", "wb") as f:
+with open('bm25_retriever.pkl', 'wb') as f:
     pickle.dump(bm25_retriever, f)
 
 KNOWLEDGE_VECTOR_DATABASE = FAISS.from_documents(
     docs_processed_simple, embedding_model, distance_strategy=DistanceStrategy.COSINE
 )
 
-KNOWLEDGE_VECTOR_DATABASE.save_local("VECTOR_DB")
+KNOWLEDGE_VECTOR_DATABASE.save_local('VECTOR_DB')

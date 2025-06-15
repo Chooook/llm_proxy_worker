@@ -31,7 +31,7 @@ EMBEDDING_MODEL_NAME = 'models/intfloat'
 
 embedding_model = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
 
-with open("bm25_retriever.pkl", "rb") as f:
+with open('bm25_retriever.pkl', 'rb') as f:
     bm25_retriever = pickle.load(f)
 
 KNOWLEDGE_VECTOR_DATABASE = FAISS.load_local(
@@ -110,13 +110,13 @@ def parse_originals_json(doc_number: str) -> dict:
             }
         return None
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Ошибка при чтении originals.json: {e}")
+        print(f'Ошибка при чтении originals.json: {e}')
         return None
 
 
 def build_document_link(doc_metadata: str) -> str:
     # Формируем ссылку
-    base_url = "https://df-bitbucket.ca.sbrf.ru/projects/KNOWLEDGE_BASE_SVA/repos/knowledge_base_pm/browse"
+    base_url = 'https://df-bitbucket.ca.sbrf.ru/projects/KNOWLEDGE_BASE_SVA/repos/knowledge_base_pm/browse'
 
     doc_number = None
 
@@ -131,11 +131,11 @@ def build_document_link(doc_metadata: str) -> str:
 
     if not doc_number or not doc_info or not doc_info.get('title'):
         doc_relative_path = doc_metadata.replace('knowledge_base_pm/', '')
-        return f"{base_url}/{doc_relative_path}"
+        return f'{base_url}/{doc_relative_path}'
 
     encoded_title = quote(doc_info['title'])
 
-    return f"{base_url}/originals/{encoded_title}"
+    return f'{base_url}/originals/{encoded_title}'
 
 
 def answer_with_rag(prompt: str,
@@ -162,10 +162,10 @@ def answer_with_rag(prompt: str,
 
     processed_docs = processed_docs[:num_docs_final]
 
-    context = "\nExtracted documents:\n"
+    context = '\nExtracted documents:\n'
     for i, doc in enumerate(processed_docs):
 
-        context += f"Document {str(i)}:::\n{doc['text']}\n"
+        context += f'Document {str(i)}:::\n{doc["text"]}\n'
 
     final_prompt = RAG_PROMPT_TEMPLATE.format(
         prompt=prompt, context=context)
