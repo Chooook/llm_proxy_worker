@@ -9,7 +9,7 @@ from schemas.task import Task
 
 
 async def recover_tasks(redis: Redis):
-    # FIXME: can make problems if func called when worker handling this tasks
+    # can make problems if func called when worker handling this tasks
     logger.info('🔍 Восстановление незавершенных задач...')
     while True:
         task_id = await redis.rpop('processing_queue')

@@ -13,10 +13,7 @@ from utils.redis_utils import cleanup_dlq, mark_task_failed, recover_tasks
 
 logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
-# TODO: rewrite to save to redis when registered, add load handlers to
-#  backend at startup and delete all handlers after worker stop
-# FIXME: handlers have to be same in backend and worker models,
-#  in redis and frontend. Make one place to define handlers
+
 HANDLERS = {
     'dummy':
         'handlers.dummy_handler:handle_task_dummy',
@@ -39,7 +36,6 @@ async def __main():
         logger.error(error_msg)
         raise RuntimeError(error_msg)
 
-    # TODO: replace with auto freeze to GP and move to backend lifespan:
     asyncio.create_task(cleanup_dlq(redis))
     await recover_tasks(redis)
 

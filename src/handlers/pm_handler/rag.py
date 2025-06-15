@@ -22,8 +22,7 @@ from .gigachat_connect import get_answer
 from .prompts import PROMPT_IN_CHAT_FORMAT
 from .utils import add_docs_links
 
-# TODO: добавить механизм подгрузки конфига с путями и другой инфой
-# TODO: добавить ленивую загрузку моделей
+
 def init():
     pass
 
