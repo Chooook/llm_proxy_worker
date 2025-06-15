@@ -27,3 +27,5 @@ class Task(BaseModel):
     retries: int = 0
     result: Answer = Answer(text='')
     error: Answer = Answer(text='')
+    start_position: int = 0
+    current_position: int = 0
