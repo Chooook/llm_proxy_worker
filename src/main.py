@@ -14,20 +14,8 @@ from utils.redis_utils import cleanup_dlq, mark_task_failed, recover_tasks
 logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
 
-HANDLERS = {
-    'dummy':
-        'handlers.dummy_handler:handle_task_dummy',
-    'generate_local':
-        'handlers.local_model_handler:handle_task_with_local_model',
-    'generate_pm':
-        'handlers.pm_handler:answer_with_rag',
-    'generate_spc':
-        'handlers.spc_fast.multi_agent.main:run_agent',
-}
-
-
 async def __main():
-    task_handlers = register_handlers(HANDLERS)
+    task_handlers = register_handlers(settings.HANDLERS)
 
     if len(task_handlers) - 1 == 0:  # -1 for dummy handler
         logger.warning('❌ Доступен только dummy обработчик!')

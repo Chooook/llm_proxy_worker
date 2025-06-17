@@ -5,6 +5,7 @@ from loguru import logger
 
 from schemas.answer import Answer
 from schemas.task import Task
+from schemas.handler import HandlerConfig
 
 
 def import_handler(import_string: str) -> Callable[[Task], Answer]:
@@ -15,18 +16,18 @@ def import_handler(import_string: str) -> Callable[[Task], Answer]:
 
 
 def register_handlers(
-        handlers_list: dict[str, str]) -> dict[str, Callable[[Task], Answer]]:
+        handlers_list: list[HandlerConfig]) -> dict[str, Callable[[Task], Answer]]:
     """Verify and register handlers"""
     test_task = Task(prompt='Привет')
     verified_handlers: dict[str, Callable[[Task], Answer]] = {}
-    for handler_name, handler_func in handlers_list.items():
+    for handler in handlers_list:
         try:
-            handler = import_handler(handler_func)
-            handler(test_task)  # test launch
-            verified_handlers[handler_name] = handler
-            logger.info(f'✅ Обработчик {handler_name} зарегистрирован')
+            handler_func = import_handler(handler.import_path)
+            handler_func(test_task)  # test launch
+            verified_handlers[handler.task_type] = handler_func
+            logger.info(f'✅ Обработчик "{handler.name}" зарегистрирован')
         except Exception as e:
             logger.warning(
-                f'⚠️ LLM обработчик {handler_name} недоступен: {e}')
+                f'⚠️ LLM обработчик "{handler.name}" недоступен: {e}')
 
     return verified_handlers
