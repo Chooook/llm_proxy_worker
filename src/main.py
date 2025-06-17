@@ -22,7 +22,7 @@ HANDLERS = {
     'generate_pm':
         'handlers.pm_handler:answer_with_rag',
     'generate_spc':
-        'spc_fast.multi_agent.main:run_agent',
+        'handlers.spc_fast.multi_agent.main:run_agent',
 }
 
 
@@ -69,7 +69,9 @@ async def __process_task(
         handler = __get_handler(task, task_handlers)
 
         logger.debug(f'🧠 Получен prompt: {task.prompt}')
-        result = handler(task)
+        result: Answer | str = handler(task)
+        if isinstance(result, str):
+            result = Answer(text=result)
 
         task.finished_at = datetime.now(timezone.utc).isoformat()
         task.status = 'completed'
