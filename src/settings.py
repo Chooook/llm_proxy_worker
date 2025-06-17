@@ -1,17 +1,40 @@
-from pydantic_settings import BaseSettings
+from pathlib import Path
+from typing import List, Tuple, Type
+
+from pydantic import Field
+from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
+                               SettingsConfigDict, YamlConfigSettingsSource)
+
+from schemas.handler import HandlerConfig
 
 
 class Settings(BaseSettings):
-    LOGLEVEL: str = 'INFO'
+    model_config = SettingsConfigDict(
+        yaml_file=Path(__file__).parent.parent / 'config.yaml')
+
+    LOGLEVEL: str
     DEBUG: bool = False
+
     HOST: str = '127.0.0.1'
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
-    MODEL_PATH: str
 
-    class Config:
-        env_file = '../.env'
-        env_file_encoding = 'utf-8'
-        case_sensitive = True
+    MODEL_PATH: str = ''
+    HANDLERS: List[HandlerConfig] = Field(
+        default_factory=list,
+        description='Handlers configuration list'
+    )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> Tuple[PydanticBaseSettingsSource, ...]:
+        return (YamlConfigSettingsSource(settings_cls),)
+
 
 settings = Settings()

@@ -1,0 +1,19 @@
+LOGLEVEL: DEBUG
+DEBUG: False
+HOST: 127.0.0.1
+REDIS_PORT: 6379
+REDIS_DB: 0
+MODEL_PATH: '../models/Nxcode-CQ-7B-orpo.fp16.gguf'
+HANDLERS:
+  - name: ИА СПК
+    task_type: generate_spc
+    import_path: "handlers.spc_fast.multi_agent.main:run_agent"
+  - name: ИА PM
+    task_type: generate_pm
+    import_path: "handlers.pm_handler:answer_with_rag"
+  - name: Локальная модель
+    task_type: generate_local
+    import_path: "handlers.local_model_handler:handle_task_with_local_model"
+  - name: Перемешать буквы
+    task_type: dummy
+    import_path: "handlers.dummy_handler:handle_task_dummy"
