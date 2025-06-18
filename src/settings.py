@@ -1,7 +1,6 @@
 from pathlib import Path
-from typing import List, Tuple, Type
+from typing import Tuple, Type
 
-from pydantic import Field
 from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
                                SettingsConfigDict, YamlConfigSettingsSource)
 
@@ -20,10 +19,7 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
 
     MODEL_PATH: str = ''
-    HANDLERS: List[HandlerConfig] = Field(
-        default_factory=list,
-        description='Handlers configuration list'
-    )
+    HANDLERS: list[HandlerConfig]
 
     @classmethod
     def settings_customise_sources(
