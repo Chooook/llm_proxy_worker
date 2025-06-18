@@ -5,7 +5,6 @@ from loguru import logger
 
 
 async def recover_tasks(redis: Redis):
-    # can make problems if func called when worker handling this tasks
     logger.info('🔍 Восстановление незавершенных задач...')
     while True:
         task_id = await redis.rpop('processing_queue')

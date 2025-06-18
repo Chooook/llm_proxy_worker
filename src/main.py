@@ -12,7 +12,7 @@ from handlers import register_handlers
 from schemas.answer import Answer
 from schemas.task import Task
 from settings import settings
-from utils.redis_utils import cleanup_dlq, mark_task_failed, recover_tasks
+from utils.redis_utils import cleanup_dlq, recover_tasks
 
 logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
@@ -23,12 +23,17 @@ async def __main():
     task_handlers = register_handlers(settings.HANDLERS)
 
     try:
+        any_workers_exist = await redis.exists('worker_count')
+
         await __store_handlers(task_handlers)
-        asyncio.create_task(cleanup_dlq(redis))
-        await recover_tasks(redis)
 
         await redis.setex(worker_id, 30, 'alive')
         asyncio.create_task(heartbeat(worker_id))
+
+        asyncio.create_task(cleanup_dlq(redis))
+
+        if not any_workers_exist:
+            await recover_tasks(redis)
 
         await __worker_loop(task_handlers)
         worker_started = True
@@ -38,15 +43,16 @@ async def __main():
     finally:
         if worker_started:
             try:
-                current_count = int(await redis.decr('worker_count'))
-                if current_count <= 0:
+                current_workers_count = int(await redis.decr('worker_count'))
+                if current_workers_count <= 0:
                     await asyncio.gather(
                         redis.delete('available_handlers'),
                         redis.delete('worker_count'),
                         redis.delete(worker_id)
                     )
                 logger.info(
-                    f'Worker stopped. Current workers: {current_count}')
+                    'Worker stopped. '
+                    f'Current workers: {current_workers_count}')
             except Exception as e:
                 logger.error(f'Cleanup error: {e}')
         await redis.close()
