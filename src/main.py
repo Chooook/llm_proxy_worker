@@ -166,6 +166,8 @@ if __name__ == '__main__':
     redis = Redis(host=settings.HOST,
                   port=settings.REDIS_PORT,
                   db=settings.REDIS_DB,
+                  socket_timeout=10,
+                  socket_connect_timeout=5,
                   decode_responses=True)
     try:
         asyncio.run(__main())
