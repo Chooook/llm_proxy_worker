@@ -1,4 +1,6 @@
 import asyncio
+import json
+import sys
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -7,6 +9,7 @@ from loguru import logger
 
 from handlers import register_handlers
 from schemas.answer import Answer
+from schemas.handler import HandlerConfig
 from schemas.task import Task
 from settings import settings
 from utils.redis_utils import cleanup_dlq, mark_task_failed, recover_tasks
@@ -15,6 +18,7 @@ logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
 
 async def __main():
+    worker_started = False
     task_handlers = register_handlers(settings.HANDLERS)
 
     if len(task_handlers) - 1 == 0:  # -1 for dummy handler
@@ -24,13 +28,55 @@ async def __main():
         logger.error(error_msg)
         raise RuntimeError(error_msg)
 
-    asyncio.create_task(cleanup_dlq(redis))
-    await recover_tasks(redis)
-
     try:
+        await __store_handlers(task_handlers)
+        asyncio.create_task(cleanup_dlq(redis))
+
+        await recover_tasks(redis)
         await __worker_loop(task_handlers)
+        worker_started = True
     finally:
+        if worker_started:
+            current_count = int(await redis.decr("worker_count"))
+            if current_count <= 0:
+                await redis.delete("available_handlers")
+                await redis.delete("worker_count")
+                print('Завершение работы...', flush=True)
         await redis.close()
+
+
+async def __store_handlers(task_handlers: dict[str, Callable[[Task], Answer]]):
+    """Store handlers in redis"""
+    verified_handlers_configs = [
+        h_config for h_config in settings.HANDLERS
+        if h_config.task_type in task_handlers.keys()]
+    logger.info(f'✅ Доступные обработчики: {verified_handlers_configs}')
+
+    raw_stored_handlers = await redis.get('available_handlers')
+    json.dumps([h_config.dict() for h_config in verified_handlers_configs])
+
+    if raw_stored_handlers:
+        stored_handlers = [
+            HandlerConfig.model_validate(h_config)
+            for h_config in json.loads(raw_stored_handlers)]
+
+        stored_types = {h.task_type for h in stored_handlers}
+        verified_types = {h_type for h_type in task_handlers.keys()}
+
+        if stored_types != verified_types:
+            missing = verified_types - stored_types
+            extra = stored_types - verified_types
+            raise ValueError(f'⚠️ Несоответствующие обработчики '
+                             f'с существующими в redis! '
+                             f'Отсутствуют: {missing}, '
+                             f'Излишние: {extra}')
+
+        await redis.incr('worker_count')
+    else:
+        configs_json_dump = json.dumps(
+            [h_config.dict() for h_config in verified_handlers_configs])
+        await redis.set('available_handlers', configs_json_dump)
+        await redis.set('worker_count', 1)
 
 
 async def __worker_loop(task_handlers: dict[str, Callable[[Task], Answer]]):
