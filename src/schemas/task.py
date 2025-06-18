@@ -31,3 +31,4 @@ class Task(BaseModel):
     start_position: int = 0
     current_position: int = 0
     feedback: TaskFeedback = TaskFeedbackType.NEUTRAL
+    worker_processing_time: float = 0
