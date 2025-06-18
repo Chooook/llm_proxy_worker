@@ -159,7 +159,7 @@ async def __process_task(
         logger.success(f'✅ Задача {task_id} выполнена')
 
     except Exception as e:
-        await __handle_task_error(task_id, task, e)
+        await __handle_task_error(task_id, e)
 
 
 async def __get_task(task_id: str) -> Task:
