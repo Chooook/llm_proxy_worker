@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from typing import Callable
@@ -19,64 +20,96 @@ logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
 async def __main():
     worker_started = False
+    worker_id = f'worker:{os.getpid()}'
     task_handlers = register_handlers(settings.HANDLERS)
-
-    if len(task_handlers) - 1 == 0:  # -1 for dummy handler
-        logger.warning('❌ Доступен только dummy обработчик!')
-    elif not task_handlers:
-        error_msg = '❌ Нет доступных обработчиков задач!'
-        logger.error(error_msg)
-        raise RuntimeError(error_msg)
 
     try:
         await __store_handlers(task_handlers)
         asyncio.create_task(cleanup_dlq(redis))
 
         await recover_tasks(redis)
+
+        # Мониторинг активности worker'а
+        await redis.setex(worker_id, 30, 'alive')
+        asyncio.create_task(heartbeat(worker_id))
+
         await __worker_loop(task_handlers)
         worker_started = True
+    except Exception as e:
+        logger.error(f'Worker startup failed: {e}')
+        raise
     finally:
         if worker_started:
-            current_count = int(await redis.decr("worker_count"))
-            if current_count <= 0:
-                await redis.delete("available_handlers")
-                await redis.delete("worker_count")
-                print('Завершение работы...', flush=True)
+            try:
+                current_count = int(await redis.decr('worker_count'))
+                if current_count <= 0:
+                    await asyncio.gather(
+                        redis.delete('available_handlers'),
+                        redis.delete('worker_count'),
+                        redis.delete(worker_id)
+                    )
+                logger.info(
+                    f'Worker stopped. Current workers: {current_count}')
+            except Exception as e:
+                logger.error(f'Cleanup error: {e}')
         await redis.close()
 
 
-async def __store_handlers(task_handlers: dict[str, Callable[[Task], Answer]]):
-    """Store handlers in redis"""
-    verified_handlers_configs = [
-        h_config for h_config in settings.HANDLERS
-        if h_config.task_type in task_handlers.keys()]
-    logger.info(f'✅ Доступные обработчики: {verified_handlers_configs}')
+async def heartbeat(worker_id):
+    """Update worker alive status"""
+    while True:
+        try:
+            await redis.expire(worker_id, 30)
+            await asyncio.sleep(15)
+        except Exception as e:
+            logger.warning(f"Heartbeat failed: {e}")
+            break
 
+
+async def __store_handlers(task_handlers: dict[str, Callable[[Task], Answer]]):
+    """Store and verify handlers in Redis"""
+    # Фильтрация доступных обработчиков
+    available_handlers = [
+        h_config for h_config in settings.HANDLERS
+        if h_config.task_type in task_handlers
+    ]
+
+    if not available_handlers:
+        error_msg = '❌ Нет доступных обработчиков задач!'
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+    logger.info('✅ Доступные обработчики: '
+                f'{[h.task_type for h in available_handlers]}')
+
+    handlers_data = [h.dict() for h in available_handlers]
+    serialized_handlers = json.dumps(handlers_data)
+
+    # Проверка существующих обработчиков
     raw_stored_handlers = await redis.get('available_handlers')
-    json.dumps([h_config.dict() for h_config in verified_handlers_configs])
 
     if raw_stored_handlers:
-        stored_handlers = [
-            HandlerConfig.model_validate(h_config)
-            for h_config in json.loads(raw_stored_handlers)]
+        stored_handlers = json.loads(raw_stored_handlers)
+        stored_types = {h['task_type'] for h in stored_handlers}
+        current_types = {h.task_type for h in available_handlers}
 
-        stored_types = {h.task_type for h in stored_handlers}
-        verified_types = {h_type for h_type in task_handlers.keys()}
-
-        if stored_types != verified_types:
-            missing = verified_types - stored_types
-            extra = stored_types - verified_types
-            raise ValueError(f'⚠️ Несоответствующие обработчики '
-                             f'с существующими в redis! '
-                             f'Отсутствуют: {missing}, '
-                             f'Излишние: {extra}')
+        if stored_types != current_types:
+            missing = current_types - stored_types
+            extra = stored_types - current_types
+            error_msg = ('⚠️ Несоответствие обработчиков '
+                         'с существующими в Redis! '
+                         f'Отсутствуют: {missing}, Излишние: {extra}')
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         await redis.incr('worker_count')
     else:
-        configs_json_dump = json.dumps(
-            [h_config.dict() for h_config in verified_handlers_configs])
-        await redis.set('available_handlers', configs_json_dump)
-        await redis.set('worker_count', 1)
+        # Первый worker инициализирует данные
+        async with redis.pipeline() as pipe:
+            await (pipe.set('available_handlers', serialized_handlers)
+                       .set('worker_count', 1)
+                       .execute())
+        logger.info('Initialized Redis with new handlers')
 
 
 async def __worker_loop(task_handlers: dict[str, Callable[[Task], Answer]]):
@@ -173,6 +206,6 @@ if __name__ == '__main__':
         asyncio.run(__main())
     except KeyboardInterrupt:
         logger.info('Worker stopped by user')
-    except Exception as e:
-        logger.critical(f'Worker fatal error: {e}')
+    except Exception as err:
+        logger.critical(f'Worker fatal error: {err}')
         sys.exit(1)
