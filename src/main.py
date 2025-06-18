@@ -194,6 +194,7 @@ async def __handle_task_error(task_id: str, error: Exception):
 
         if task.retries >= settings.MAX_RETRIES:
             task.error = Answer(text=error_msg)
+            task.status = 'failed'
             async with redis.pipeline() as pipe:
                 task_data = task.model_dump_json()
                 await (pipe.lrem('processing_queue', 1, task_id)
