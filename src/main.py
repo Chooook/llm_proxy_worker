@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime, timezone
+import time
 from typing import Callable
 
 from redis.asyncio import Redis
@@ -10,7 +10,6 @@ from loguru import logger
 
 from handlers import register_handlers
 from schemas.answer import Answer
-from schemas.handler import HandlerConfig
 from schemas.task import Task
 from settings import settings
 from utils.redis_utils import cleanup_dlq, mark_task_failed, recover_tasks
@@ -28,7 +27,6 @@ async def __main():
         asyncio.create_task(cleanup_dlq(redis))
         await recover_tasks(redis)
 
-        # Мониторинг активности worker'а
         await redis.setex(worker_id, 30, 'alive')
         asyncio.create_task(heartbeat(worker_id))
 
@@ -61,7 +59,7 @@ async def heartbeat(worker_id):
             await redis.expire(worker_id, 30)
             await asyncio.sleep(15)
         except Exception as e:
-            logger.warning(f"Heartbeat failed: {e}")
+            logger.warning(f'⚠️ Heartbeat failed: {e}')
             break
 
 
@@ -84,7 +82,6 @@ async def __store_handlers(task_handlers: dict[str, Callable[[Task], Answer]]):
     handlers_data = [h.dict() for h in available_handlers]
     serialized_handlers = json.dumps(handlers_data)
 
-    # Проверка существующих обработчиков
     raw_stored_handlers = await redis.get('available_handlers')
 
     if raw_stored_handlers:
@@ -103,7 +100,6 @@ async def __store_handlers(task_handlers: dict[str, Callable[[Task], Answer]]):
 
         await redis.incr('worker_count')
     else:
-        # Первый worker инициализирует данные
         async with redis.pipeline() as pipe:
             await (pipe.set('available_handlers', serialized_handlers)
                        .set('worker_count', 1)
@@ -134,29 +130,33 @@ async def __worker_loop(task_handlers: dict[str, Callable[[Task], Answer]]):
 
 async def __process_task(
         task_id: str, task_handlers: dict[str, Callable[[Task], Answer]]):
-    """Handle task"""
-
-    task = await __get_task(task_id)
-
     try:
-        handler = __get_handler(task, task_handlers)
+        task = await __get_task(task_id)
+        handler = task_handlers.get(task.task_type)
+
+        if not handler:
+            raise ValueError(f'⚠️ Unsupported task type: {task.task_type}')
 
         logger.debug(f'🧠 Получен prompt: {task.prompt}')
-        result: Answer | str = handler(task)
+        start_time = time.time()
+        result = handler(task)
+        processing_time = time.time() - start_time
+
         if isinstance(result, str):
             result = Answer(text=result)
 
-        task.finished_at = datetime.now(timezone.utc).isoformat()
         task.status = 'completed'
-
         task.result = result
+        task.worker_processing_time = processing_time
         logger.debug(f'🧠 Результат: {result}')
 
-        task_as_json = task.model_dump_json()
+        async with redis.pipeline() as pipe:
+            await (pipe.setex(f'task:{task_id}', 86400, task.model_dump_json())
+                       .lrem('processing_queue', 1, task_id)
+                       .execute())
 
-        await redis.setex(f'task:{task_id}', 86400, task_as_json)
-        await redis.lrem('processing_queue', 1, task_id)
-        logger.success(f'✅ Задача {task_id} выполнена')
+        logger.success(
+            f'✅ Задача {task_id} выполнена за {processing_time:.2f}s')
 
     except Exception as e:
         await __handle_task_error(task_id, e)
@@ -174,23 +174,12 @@ async def __get_task(task_id: str) -> Task:
     return task
 
 
-def __get_handler(task: Task,
-                  task_handlers: dict[str, Callable[[Task], Answer]]
-                  ) -> Callable[[Task], Answer]:
-    task_type = task.task_type
-    handler = task_handlers.get(task_type)
-
-    if not handler:
-        raise RuntimeError(f'⚠️ Тип задачи {task_type} не поддерживается')
-    return handler
-
-
 async def __handle_task_error(task_id: str, error: Exception):
     """Handle task processing errors"""
     try:
         task_data = await redis.get(f'task:{task_id}')
         if not task_data:
-            logger.error(f"Task {task_id} not found")
+            logger.error(f'⚠️ Task {task_id} not found')
             return
 
         task = Task.model_validate_json(task_data)
@@ -198,21 +187,20 @@ async def __handle_task_error(task_id: str, error: Exception):
         error_msg = str(error)
 
         if task.retries >= settings.MAX_RETRIES:
+            task.error = Answer(text=error_msg)
             async with redis.pipeline() as pipe:
+                task_data = task.model_dump_json()
                 await (pipe.lrem('processing_queue', 1, task_id)
                            .rpush('dead_letters', task_id)
-                           .setex(f'task:{task_id}',
-                                  86400,
-                                  task.model_dump_json())
+                           .setex(f'task:{task_id}', 86400, task_data)
                            .execute())
             logger.error(f'⚠️ Задача {task_id} перемещена в DLQ: {error_msg}')
         else:
+            task_data = task.model_dump_json()
             async with redis.pipeline() as pipe:
                 await (pipe.lrem('processing_queue', 1, task_id)
                            .rpush('task_queue', task_id)
-                           .setex(f'task:{task_id}',
-                                  86400,
-                                  task.model_dump_json())
+                           .setex(f'task:{task_id}', 86400, task_data)
                            .execute())
             logger.warning(
                 f'🔄 Повторная попытка для задачи {task_id}'
