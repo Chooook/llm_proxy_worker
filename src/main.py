@@ -26,7 +26,6 @@ async def __main():
     try:
         await __store_handlers(task_handlers)
         asyncio.create_task(cleanup_dlq(redis))
-
         await recover_tasks(redis)
 
         # Мониторинг активности worker'а
@@ -113,14 +112,21 @@ async def __store_handlers(task_handlers: dict[str, Callable[[Task], Answer]]):
 
 
 async def __worker_loop(task_handlers: dict[str, Callable[[Task], Answer]]):
-
+    """Start main worker processing loop"""
     while True:
         try:
+            # timeout for signals handling
             task_id = await redis.brpoplpush(
-                'task_queue', 'processing_queue', timeout=0)
+                'task_queue', 'processing_queue', timeout=1)
+            if not task_id:
+                continue
             logger.info(f'📥 Получена задача: {task_id}')
+
             await __process_task(task_id, task_handlers)
 
+        except asyncio.CancelledError:
+            logger.info('Worker loop cancelled')
+            break
         except Exception as e:
             logger.error(f'⚠️ Ошибка в worker: {e}')
             await asyncio.sleep(1)
