@@ -167,4 +167,10 @@ if __name__ == '__main__':
                   port=settings.REDIS_PORT,
                   db=settings.REDIS_DB,
                   decode_responses=True)
-    asyncio.run(__main())
+    try:
+        asyncio.run(__main())
+    except KeyboardInterrupt:
+        logger.info('Worker stopped by user')
+    except Exception as e:
+        logger.critical(f'Worker fatal error: {e}')
+        sys.exit(1)
