@@ -185,20 +185,41 @@ def __get_handler(task: Task,
     return handler
 
 
-async def __handle_task_error(task_id: str, task: Task, e: Exception):
-    logger.error(f'⚠️ Ошибка обработки задачи {task_id}: {e}')
-    task.retries += 1
-    await redis.setex(f'task:{task_id}', 86400, task.model_dump_json())
-    if task.retries > 2:
-        await redis.lrem('processing_queue', 1, task_id)
-        await redis.rpush('dead_letters', task_id)
-        error_msg = '⚠️ Задача не выполнена, превышено количество попыток'
-        await mark_task_failed(redis, task_id, error_msg)
-        await asyncio.sleep(1)
-    else:
-        await redis.lrem('processing_queue', 1, task_id)
-        await redis.rpush('task_queue', task_id)
-        await asyncio.sleep(1)
+async def __handle_task_error(task_id: str, error: Exception):
+    """Handle task processing errors"""
+    try:
+        task_data = await redis.get(f'task:{task_id}')
+        if not task_data:
+            logger.error(f"Task {task_id} not found")
+            return
+
+        task = Task.model_validate_json(task_data)
+        task.retries += 1
+        error_msg = str(error)
+
+        if task.retries >= settings.MAX_RETRIES:
+            async with redis.pipeline() as pipe:
+                await (pipe.lrem('processing_queue', 1, task_id)
+                           .rpush('dead_letters', task_id)
+                           .setex(f'task:{task_id}',
+                                  86400,
+                                  task.model_dump_json())
+                           .execute())
+            logger.error(f'⚠️ Задача {task_id} перемещена в DLQ: {error_msg}')
+        else:
+            async with redis.pipeline() as pipe:
+                await (pipe.lrem('processing_queue', 1, task_id)
+                           .rpush('task_queue', task_id)
+                           .setex(f'task:{task_id}',
+                                  86400,
+                                  task.model_dump_json())
+                           .execute())
+            logger.warning(
+                f'🔄 Повторная попытка для задачи {task_id}'
+                f' (попытка {task.retries}): {error_msg}')
+
+    except Exception as e:
+        logger.error(f'⚠️ Критическая ошибка обработки задачи {task_id}: {e}')
 
 
 if __name__ == '__main__':

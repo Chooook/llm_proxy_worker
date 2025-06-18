@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
 
     MODEL_PATH: str = ''
+    MAX_RETRIES: int = 3
     HANDLERS: list[HandlerConfig]
 
     @classmethod
