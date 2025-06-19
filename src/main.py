@@ -128,7 +128,7 @@ async def __store_handlers(
     logger.info('ℹ️ Available handlers: '
                 f'{[h.task_type for h in available_handlers]}')
 
-    handlers_data = [h.dict() for h in available_handlers]
+    handlers_data = [h.model_dump() for h in available_handlers]
     serialized_handlers = json.dumps(handlers_data)
 
     raw_stored_handlers = await redis.get('available_handlers')
