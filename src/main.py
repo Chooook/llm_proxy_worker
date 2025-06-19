@@ -62,7 +62,7 @@ class Worker:
             current_workers = int(await self.redis.decr('worker_count'))
             if current_workers <= 0:
                 await asyncio.gather(
-                    self.redis.delete('available_handlers'),
+                    self.redis.delete('handlers'),
                     self.redis.delete('worker_count'),
                     self.redis.delete(self.id)
                 )
@@ -129,7 +129,7 @@ async def __store_handlers(
     handlers_data = [h.model_dump() for h in settings.HANDLERS]
     serialized_handlers = json.dumps(handlers_data)
 
-    raw_stored_handlers = await redis.get('available_handlers')
+    raw_stored_handlers = await redis.get('handlers')
 
     if raw_stored_handlers:
         stored_handlers = [HandlerConfig.model_validate(h)
@@ -150,7 +150,7 @@ async def __store_handlers(
         await redis.incr('worker_count')
     else:
         async with redis.pipeline() as pipe:
-            await (pipe.set('available_handlers', serialized_handlers)
+            await (pipe.set('handlers', serialized_handlers)
                        .set('worker_count', 1)
                        .execute())
         logger.info('ℹ️ Initialized Redis with new handlers')
