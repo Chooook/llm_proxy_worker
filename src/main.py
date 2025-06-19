@@ -1,17 +1,17 @@
 import asyncio
-import asyncio_atexit
 import json
 import os
-import sys
 import signal
+import sys
 import time
 from typing import Callable
 
-from redis.asyncio import Redis
 from loguru import logger
+from redis.asyncio import Redis
 
 from handlers import register_handlers
 from schemas.answer import Answer
+from schemas.handler import HandlerConfig
 from schemas.task import Task
 from settings import settings
 from utils.redis_utils import cleanup_dlq, recover_tasks
@@ -87,8 +87,6 @@ async def run_worker():
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.add_signal_handler(sig, worker.shutdown_event.set)
 
-        asyncio_atexit.register(worker.cleanup)
-
         try:
             task_handlers = register_handlers(settings.HANDLERS)
             any_workers_exist = await worker.redis.exists('worker_count')
@@ -115,28 +113,31 @@ async def run_worker():
 async def __store_handlers(
         redis: Redis, task_handlers: dict[str, Callable[[Task], Answer]]):
     """Store and verify handlers in Redis"""
-    available_handlers = [
-        h_config for h_config in settings.HANDLERS
-        if h_config.task_type in task_handlers
-    ]
+    for h_config in settings.HANDLERS:
+        if h_config.task_type in task_handlers:
+            h_config.available = True
 
-    if not available_handlers:
+    if all([not h.available for h in settings.HANDLERS]):
         error_msg = '‼️ No available task handlers!'
         logger.error(error_msg)
         raise RuntimeError(error_msg)
 
-    logger.info('ℹ️ Available handlers: '
-                f'{[h.task_type for h in available_handlers]}')
+    logger.info(
+        'ℹ️ Available handlers: '
+        f'{[h.task_type for h in settings.HANDLERS if h.available]}')
 
-    handlers_data = [h.model_dump() for h in available_handlers]
+    handlers_data = [h.model_dump() for h in settings.HANDLERS]
     serialized_handlers = json.dumps(handlers_data)
 
     raw_stored_handlers = await redis.get('available_handlers')
 
     if raw_stored_handlers:
-        stored_handlers = json.loads(raw_stored_handlers)
-        stored_types = {h['task_type'] for h in stored_handlers}
-        current_types = {h.task_type for h in available_handlers}
+        stored_handlers = [HandlerConfig.model_validate(h)
+                           for h in json.loads(raw_stored_handlers)]
+        stored_types = {
+            h.task_type for h in stored_handlers if h.available}
+        current_types = {
+            h.task_type for h in settings.HANDLERS if h.available}
 
         if stored_types != current_types:
             missing = current_types - stored_types
