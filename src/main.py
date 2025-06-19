@@ -1,7 +1,9 @@
 import asyncio
+import asyncio_atexit
 import json
 import os
 import sys
+import signal
 import time
 from typing import Callable
 
@@ -17,72 +19,113 @@ from utils.redis_utils import cleanup_dlq, recover_tasks
 logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
 
-async def __main():
-    worker_started = False
-    worker_id = f'worker:{os.getpid()}'
-    task_handlers = register_handlers(settings.HANDLERS)
+class Worker:
+    def __init__(self):
+        self.started = False
+        self.id = f'worker:{os.getpid()}'
+        self.redis = Redis(
+            host=settings.HOST,
+            port=settings.REDIS_PORT,
+            db=settings.REDIS_DB,
+            socket_timeout=10,
+            socket_connect_timeout=5,
+            decode_responses=True
+        )
+        self.tasks = set()
+        self.shutdown_event = asyncio.Event()
 
-    try:
-        any_workers_exist = await redis.exists('worker_count')
+    async def __aenter__(self):
+        return self
 
-        await __store_handlers(task_handlers)
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.cleanup()
 
-        await redis.setex(worker_id, 30, 'alive')
-        asyncio.create_task(heartbeat(worker_id))
+    async def cleanup(self):
+        if not self.started:
+            logger.info('ℹ️ Worker was not started, skipping cleanup')
+            return
 
-        asyncio.create_task(cleanup_dlq(redis))
+        logger.info('ℹ️ Starting cleanup procedure...')
 
-        if not any_workers_exist:
-            await recover_tasks(redis)
+        for task in self.tasks:
+            task.cancel()
 
-        await __worker_loop(task_handlers)
-        worker_started = True
-    except Exception as e:
-        logger.error(f'Worker startup failed: {e}')
-        raise
-    finally:
-        if worker_started:
-            try:
-                current_workers_count = int(await redis.decr('worker_count'))
-                if current_workers_count <= 0:
-                    await asyncio.gather(
-                        redis.delete('available_handlers'),
-                        redis.delete('worker_count'),
-                        redis.delete(worker_id)
-                    )
-                logger.info(
-                    'Worker stopped. '
-                    f'Current workers: {current_workers_count}')
-            except Exception as e:
-                logger.error(f'Cleanup error: {e}')
-        await redis.close()
-
-
-async def heartbeat(worker_id):
-    """Update worker alive status"""
-    while True:
         try:
-            await redis.expire(worker_id, 30)
-            await asyncio.sleep(15)
+            await asyncio.wait_for(
+                asyncio.gather(*self.tasks, return_exceptions=True),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning('⚠️ Some tasks didn`t finish gracefully')
+
+        try:
+            current_workers = int(await self.redis.decr('worker_count'))
+            if current_workers <= 0:
+                await asyncio.gather(
+                    self.redis.delete('available_handlers'),
+                    self.redis.delete('worker_count'),
+                    self.redis.delete(self.id)
+                )
+            logger.info(f'⚒️ Remaining workers: {current_workers}')
         except Exception as e:
-            logger.warning(f'⚠️ Heartbeat failed: {e}')
-            break
+            logger.error(f'‼️ Cleanup error: {e}')
+        finally:
+            await self.redis.aclose()
+            logger.success('✅️ Worker shutdown completed')
+
+    def create_task(self, coro):
+        task = asyncio.create_task(coro)
+        self.tasks.add(task)
+        task.add_done_callback(lambda t: self.tasks.remove(t))
+        return task
 
 
-async def __store_handlers(task_handlers: dict[str, Callable[[Task], Answer]]):
+async def run_worker():
+    async with Worker() as worker:
+        if sys.platform != 'win32':
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, worker.shutdown_event.set)
+
+        asyncio_atexit.register(worker.cleanup)
+
+        try:
+            task_handlers = register_handlers(settings.HANDLERS)
+            any_workers_exist = await worker.redis.exists('worker_count')
+
+            await __store_handlers(worker.redis, task_handlers)
+            worker.started = True
+
+            await worker.redis.setex(worker.id, 30, 'alive')
+            worker.create_task(heartbeat(worker))
+            worker.create_task(cleanup_dlq(worker.redis))
+
+            if not any_workers_exist:
+                await recover_tasks(worker.redis)
+
+            await __worker_loop(worker, task_handlers)
+
+        except asyncio.CancelledError:
+            logger.info('ℹ️ Worker stopped gracefully')
+        except Exception as e:
+            logger.critical(f'‼️ Worker crashed: {e}')
+            raise
+
+
+async def __store_handlers(
+        redis: Redis, task_handlers: dict[str, Callable[[Task], Answer]]):
     """Store and verify handlers in Redis"""
-    # Фильтрация доступных обработчиков
     available_handlers = [
         h_config for h_config in settings.HANDLERS
         if h_config.task_type in task_handlers
     ]
 
     if not available_handlers:
-        error_msg = '❌ Нет доступных обработчиков задач!'
+        error_msg = '‼️ No available task handlers!'
         logger.error(error_msg)
         raise RuntimeError(error_msg)
 
-    logger.info('✅ Доступные обработчики: '
+    logger.info('ℹ️ Available handlers: '
                 f'{[h.task_type for h in available_handlers]}')
 
     handlers_data = [h.dict() for h in available_handlers]
@@ -98,9 +141,8 @@ async def __store_handlers(task_handlers: dict[str, Callable[[Task], Answer]]):
         if stored_types != current_types:
             missing = current_types - stored_types
             extra = stored_types - current_types
-            error_msg = ('⚠️ Несоответствие обработчиков '
-                         'с существующими в Redis! '
-                         f'Отсутствуют: {missing}, Излишние: {extra}')
+            error_msg = ('‼️ Handlers mismatch with Redis! '
+                         f'Missing: {missing}, Extra: {extra}')
             logger.error(error_msg)
             raise ValueError(error_msg)
 
@@ -110,40 +152,53 @@ async def __store_handlers(task_handlers: dict[str, Callable[[Task], Answer]]):
             await (pipe.set('available_handlers', serialized_handlers)
                        .set('worker_count', 1)
                        .execute())
-        logger.info('Initialized Redis with new handlers')
+        logger.info('ℹ️ Initialized Redis with new handlers')
 
 
-async def __worker_loop(task_handlers: dict[str, Callable[[Task], Answer]]):
-    """Start main worker processing loop"""
-    while True:
+async def heartbeat(worker: Worker):
+    """Update worker alive status"""
+    while not worker.shutdown_event.is_set():
         try:
-            # timeout for signals handling
-            task_id = await redis.brpoplpush(
+            await worker.redis.expire(worker.id, 30)
+            await asyncio.sleep(15)
+        except Exception as e:
+            logger.warning(f'⚠️ Heartbeat failed: {e}')
+            break
+
+
+async def __worker_loop(
+        worker: Worker, task_handlers: dict[str, Callable[[Task], Answer]]):
+    """Start main worker processing loop"""
+    while not worker.shutdown_event.is_set():
+        try:
+            task_id = await worker.redis.brpoplpush(
                 'task_queue', 'processing_queue', timeout=1)
             if not task_id:
                 continue
-            logger.info(f'📥 Получена задача: {task_id}')
+            logger.info(f'ℹ️ Received task: {task_id}')
 
-            await __process_task(task_id, task_handlers)
+            await __process_task(worker.redis, task_id, task_handlers)
 
         except asyncio.CancelledError:
-            logger.info('Worker loop cancelled')
+            logger.info('ℹ️ Worker loop cancelled')
             break
         except Exception as e:
-            logger.error(f'⚠️ Ошибка в worker: {e}')
+            logger.error(f'‼️ Worker error: {e}')
             await asyncio.sleep(1)
 
 
 async def __process_task(
-        task_id: str, task_handlers: dict[str, Callable[[Task], Answer]]):
+        redis: Redis,
+        task_id: str,
+        task_handlers: dict[str, Callable[[Task], Answer]]):
     try:
-        task = await __get_task(task_id)
+        task = await __get_task(redis, task_id)
         handler = task_handlers.get(task.task_type)
 
         if not handler:
-            raise ValueError(f'⚠️ Unsupported task type: {task.task_type}')
+            raise ValueError(f'Unsupported task type: {task.task_type}')
 
-        logger.debug(f'🧠 Получен prompt: {task.prompt}')
+        logger.debug(f'⚙️ Processing prompt: {task.prompt}')
         start_time = time.time()
         result = handler(task)
         processing_time = time.time() - start_time
@@ -154,7 +209,7 @@ async def __process_task(
         task.status = 'completed'
         task.result = result
         task.worker_processing_time = processing_time
-        logger.debug(f'🧠 Результат: {result}')
+        logger.debug(f'⚙️ Result: {result}')
 
         async with redis.pipeline() as pipe:
             await (pipe.setex(f'task:{task_id}', 86400, task.model_dump_json())
@@ -162,30 +217,30 @@ async def __process_task(
                        .execute())
 
         logger.success(
-            f'✅ Задача {task_id} выполнена за {processing_time:.2f}s')
+            f'✅️ Task {task_id} completed in {processing_time:.2f}s')
 
     except Exception as e:
-        await __handle_task_error(task_id, e)
+        await __handle_task_error(redis, task_id, e)
 
 
-async def __get_task(task_id: str) -> Task:
+async def __get_task(redis: Redis, task_id: str) -> Task:
     try:
         task_data = await redis.get(f'task:{task_id}')
         if not task_data:
-            raise KeyError('⚠️ Задача не найдена')
+            raise KeyError('Task not found')
         task = Task.model_validate_json(task_data)
     except Exception as e:
-        logger.error(f'⚠️ Ошибка при запуске задачи {task_id}: {e}')
+        logger.error(f'‼️ Task startup error {task_id}: {e}')
         raise
     return task
 
 
-async def __handle_task_error(task_id: str, error: Exception):
+async def __handle_task_error(redis: Redis, task_id: str, error: Exception):
     """Handle task processing errors"""
     try:
         task_data = await redis.get(f'task:{task_id}')
         if not task_data:
-            logger.error(f'⚠️ Task {task_id} not found')
+            logger.error(f'‼️ Task {task_id} not found')
             return
 
         task = Task.model_validate_json(task_data)
@@ -201,7 +256,7 @@ async def __handle_task_error(task_id: str, error: Exception):
                            .rpush('dead_letters', task_id)
                            .setex(f'task:{task_id}', 86400, task_data)
                            .execute())
-            logger.error(f'⚠️ Задача {task_id} перемещена в DLQ: {error_msg}')
+            logger.error(f'‼️ Task {task_id} moved to DLQ: {error_msg}')
         else:
             task_data = task.model_dump_json()
             async with redis.pipeline() as pipe:
@@ -210,24 +265,12 @@ async def __handle_task_error(task_id: str, error: Exception):
                            .setex(f'task:{task_id}', 86400, task_data)
                            .execute())
             logger.warning(
-                f'🔄 Повторная попытка для задачи {task_id}'
-                f' (попытка {task.retries}): {error_msg}')
+                f'⚠️ Retry for task {task_id}'
+                f' (attempt {task.retries}): {error_msg}')
 
     except Exception as e:
-        logger.error(f'⚠️ Критическая ошибка обработки задачи {task_id}: {e}')
+        logger.error(f'‼️ Critical task processing error {task_id}: {e}')
 
 
 if __name__ == '__main__':
-    redis = Redis(host=settings.HOST,
-                  port=settings.REDIS_PORT,
-                  db=settings.REDIS_DB,
-                  socket_timeout=10,
-                  socket_connect_timeout=5,
-                  decode_responses=True)
-    try:
-        asyncio.run(__main())
-    except KeyboardInterrupt:
-        logger.info('Worker stopped by user')
-    except Exception as err:
-        logger.critical(f'Worker fatal error: {err}')
-        sys.exit(1)
+    asyncio.run(run_worker())
