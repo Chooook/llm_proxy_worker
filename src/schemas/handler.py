@@ -5,5 +5,6 @@ class HandlerConfig(BaseModel):
     name: str
     task_type: str
     import_path: str
-    available: bool = False
+    version: str
+    available_workers: int = 0
     description: str = ''
