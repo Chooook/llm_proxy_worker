@@ -12,9 +12,8 @@ from redis.asyncio import Redis
 from handlers import verify_handlers
 from schemas.answer import Answer
 from schemas.handler import HandlerConfig
-from schemas.task import Task
+from schemas.task import Task, TaskStatus
 from settings import settings
-from utils.redis_utils import cleanup_dlq, recover_tasks
 
 logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
@@ -56,7 +55,7 @@ class Worker:
                 timeout=5.0
             )
         except asyncio.TimeoutError:
-            logger.warning('⚠️ Some tasks didn`t finish gracefully')
+            logger.warning('⚠️ Some tasks did not finish gracefully')
 
         try:
             current_workers = int(await self.redis.decr('worker_count'))
@@ -88,20 +87,15 @@ async def run_worker():
                 loop.add_signal_handler(sig, worker.shutdown_event.set)
 
         try:
-            any_workers_exist = await worker.redis.exists('worker_count')
             handlers_funcs = verify_handlers(settings.HANDLERS)
 
-            await __store_handlers(worker.redis, task_handlers)
+            await __store_handlers(worker, handlers_funcs)
             worker.started = True
 
             await worker.redis.setex(worker.id, 30, 'alive')
             worker.create_task(heartbeat(worker))
-            worker.create_task(cleanup_dlq(worker.redis))
 
-            if not any_workers_exist:
-                await recover_tasks(worker.redis)
-
-            await __worker_loop(worker, task_handlers)
+            await __worker_loop(worker, handlers_funcs)
 
         except asyncio.CancelledError:
             logger.info('ℹ️ Worker stopped gracefully')
@@ -111,23 +105,21 @@ async def run_worker():
 
 
 async def __store_handlers(
-        redis: Redis, task_handlers: dict[str, Callable[[Task], Answer]]):
+        worker:Worker, handlers_funcs: dict[str, Callable[[Task], Answer]]):
+    redis = worker.redis
     """Store and verify handlers in Redis"""
     for h_config in settings.HANDLERS:
-        if h_config.task_type in task_handlers:
-            h_config.available = True
+        if h_config.task_type in handlers_funcs:
+            h_config.available_workers += 1
 
-    if all([not h.available for h in settings.HANDLERS]):
+    if all([not h.available_workers for h in settings.HANDLERS]):
         error_msg = '‼️ No available task handlers!'
         logger.error(error_msg)
         raise RuntimeError(error_msg)
 
     logger.info(
         'ℹ️ Available handlers: '
-        f'{[h.task_type for h in settings.HANDLERS if h.available]}')
-
-    handlers_data = [h.model_dump() for h in settings.HANDLERS]
-    serialized_handlers = json.dumps(handlers_data)
+        f'{[h.task_type for h in settings.HANDLERS if h.available_workers]}')
 
     raw_stored_handlers = await redis.get('handlers')
 
@@ -168,7 +160,7 @@ async def heartbeat(worker: Worker):
 
 
 async def __worker_loop(
-        worker: Worker, task_handlers: dict[str, Callable[[Task], Answer]]):
+        worker: Worker, handlers_funcs: dict[str, Callable[[Task], Answer]]):
     """Start main worker processing loop"""
     while not worker.shutdown_event.is_set():
         try:
@@ -178,7 +170,13 @@ async def __worker_loop(
                 continue
             logger.info(f'ℹ️ Received task: {task_id}')
 
-            await __process_task(worker.redis, task_id, task_handlers)
+            logger.info(f'ℹ️ Received task: {task_id} from {source_queue}')
+            async with worker.redis.pipeline() as pipe:
+                await pipe.lrem('task_queue', 0, task_id)
+                await pipe.lpush('processing_queue', task_id)
+                await pipe.execute()
+
+            await __process_task(worker.redis, task_id, handlers_funcs)
 
         except asyncio.CancelledError:
             logger.info('ℹ️ Worker loop cancelled')
@@ -191,10 +189,13 @@ async def __worker_loop(
 async def __process_task(
         redis: Redis,
         task_id: str,
-        task_handlers: dict[str, Callable[[Task], Answer]]):
+        handlers_funcs: dict[str, Callable[[Task], Answer]]):
     try:
         task = await __get_task(redis, task_id)
-        handler = task_handlers.get(task.task_type)
+        handler = handlers_funcs.get(task.task_type)
+        handler_config = [h for h in settings.HANDLERS
+                          if h.task_type == task.task_type][0]
+        task.task_type_version = handler_config.version
 
         if not handler:
             raise ValueError(f'Unsupported task type: {task.task_type}')
@@ -207,15 +208,15 @@ async def __process_task(
         if isinstance(result, str):
             result = Answer(text=result)
 
-        task.status = 'completed'
+        task.status = TaskStatus.COMPLETED
         task.result = result
         task.worker_processing_time = processing_time
         logger.debug(f'⚙️ Result: {result}')
 
         async with redis.pipeline() as pipe:
-            await (pipe.setex(f'task:{task_id}', 86400, task.model_dump_json())
-                       .lrem('processing_queue', 1, task_id)
-                       .execute())
+            await pipe.setex(f'task:{task_id}', 86400, task.model_dump_json())
+            await pipe.lrem('processing_queue', 1, task_id)
+            await pipe.execute()
 
         logger.success(
             f'✅️ Task {task_id} completed in {processing_time:.2f}s')
@@ -230,6 +231,7 @@ async def __get_task(redis: Redis, task_id: str) -> Task:
         if not task_data:
             raise KeyError('Task not found')
         task = Task.model_validate_json(task_data)
+        task.status = TaskStatus.RUNNING
     except Exception as e:
         logger.error(f'‼️ Task startup error {task_id}: {e}')
         raise
@@ -250,21 +252,24 @@ async def __handle_task_error(redis: Redis, task_id: str, error: Exception):
 
         if task.retries >= settings.MAX_RETRIES:
             task.error = Answer(text=error_msg)
-            task.status = 'failed'
+            task.status = TaskStatus.FAILED
+            task_data = task.model_dump_json()
             async with redis.pipeline() as pipe:
-                task_data = task.model_dump_json()
-                await (pipe.lrem('processing_queue', 1, task_id)
-                           .rpush('dead_letters', task_id)
-                           .setex(f'task:{task_id}', 86400, task_data)
-                           .execute())
+                await pipe.lrem('processing_queue', 1, task_id)
+                await pipe.rpush('dead_letters', task_id)
+                await pipe.setex(f'task:{task_id}', 86400, task_data)
+                await pipe.execute()
+
             logger.error(f'‼️ Task {task_id} moved to DLQ: {error_msg}')
         else:
             task_data = task.model_dump_json()
             async with redis.pipeline() as pipe:
-                await (pipe.lrem('processing_queue', 1, task_id)
-                           .rpush('task_queue', task_id)
-                           .setex(f'task:{task_id}', 86400, task_data)
-                           .execute())
+                await pipe.lrem('processing_queue', 1, task_id)
+                await pipe.rpush('task_queue', task_id)
+                await pipe.lpush(f'task_queue:{task.task_type}', task_id)
+                await pipe.setex(f'task:{task_id}', 86400, task_data)
+                await pipe.execute()
+
             logger.warning(
                 f'⚠️ Retry for task {task_id}'
                 f' (attempt {task.retries}): {error_msg}')
