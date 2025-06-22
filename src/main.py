@@ -9,7 +9,7 @@ from typing import Callable
 from loguru import logger
 from redis.asyncio import Redis
 
-from handlers import register_handlers
+from handlers import verify_handlers
 from schemas.answer import Answer
 from schemas.handler import HandlerConfig
 from schemas.task import Task
@@ -88,8 +88,8 @@ async def run_worker():
                 loop.add_signal_handler(sig, worker.shutdown_event.set)
 
         try:
-            task_handlers = register_handlers(settings.HANDLERS)
             any_workers_exist = await worker.redis.exists('worker_count')
+            handlers_funcs = verify_handlers(settings.HANDLERS)
 
             await __store_handlers(worker.redis, task_handlers)
             worker.started = True

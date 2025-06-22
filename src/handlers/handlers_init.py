@@ -15,7 +15,7 @@ def import_handler(import_string: str) -> Callable[[Task], Answer]:
     return getattr(module, func_name)
 
 
-def register_handlers(
+def verify_handlers(
         handlers_list: list[HandlerConfig]) -> dict[str, Callable[[Task], Answer]]:
     """Verify and register handlers"""
     test_task = Task(prompt='Привет')
