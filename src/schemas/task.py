@@ -6,20 +6,20 @@ from schemas.answer import Answer
 from schemas.feedback import TaskFeedbackType, TaskFeedback
 
 
-class TaskType(str, Enum):
-    DUMMY = 'dummy'
-    GENERATE_WITH_LOCAL = 'generate_local'
-    # SEARCH_IN_KNOWLEDGE_BASE = 'search'
-    GENERATE_WITH_PM = 'generate_pm'
-    GENERATE_WITH_SPC = 'generate_spc'
-    # GENERATE_WITH_OAPSO = 'generate_oapso'
+class TaskStatus(str, Enum):
+    PENDING = 'pending'  # no handlers available
+    QUEUED = 'queued'  # waiting for free handler
+    RUNNING = 'running'
+    COMPLETED = 'completed'
+    FAILED = 'failed'
 
 
 class Task(BaseModel):
     task_id: str = ''
     prompt: str
-    status: str = ''
-    task_type: TaskType = ''
+    status: TaskStatus = TaskStatus.PENDING
+    task_type: str = ''
+    task_type_version: str = ''
     user_id: str = ''
     short_task_id: str = ''
     queued_at: str = ''
