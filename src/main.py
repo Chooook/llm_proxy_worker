@@ -58,13 +58,32 @@ class Worker:
             logger.warning('⚠️ Some tasks did not finish gracefully')
 
         try:
+            await self.redis.delete(self.id)
             current_workers = int(await self.redis.decr('worker_count'))
             if current_workers <= 0:
-                await asyncio.gather(
-                    self.redis.delete('handlers'),
-                    self.redis.delete('worker_count'),
-                    self.redis.delete(self.id)
-                )
+                async with self.redis.pipeline() as pipe:
+                    await pipe.delete('handlers')
+                    await pipe.delete('worker_count')
+                    await pipe.execute()
+
+            else:
+                # TODO: rework with set every handler standalone
+                #  so we can decrement them separately (handler:type:version)
+                redis_handlers = [
+                    HandlerConfig.model_validate(h)
+                    for h in json.loads(await self.redis.get('handlers'))]
+                types_to_decrement = {
+                    (h.task_type, h.version)
+                    for h in settings.HANDLERS if h.available_workers}
+                for handler in types_to_decrement:
+                    for h in redis_handlers:
+                        if (h.task_type == handler[0]
+                                and h.version == handler[1]):
+                            h.available_workers -= 1
+                handlers_data = [h.model_dump() for h in redis_handlers]
+                serialized_handlers = json.dumps(handlers_data)
+                await self.redis.set('handlers', serialized_handlers)
+
             logger.info(f'⚒️ Remaining workers: {current_workers}')
         except Exception as e:
             logger.error(f'‼️ Cleanup error: {e}')
@@ -108,6 +127,7 @@ async def __store_handlers(
         worker:Worker, handlers_funcs: dict[str, Callable[[Task], Answer]]):
     redis = worker.redis
     """Store and verify handlers in Redis"""
+    # FIXME probably bad with versioning handlers:
     for h_config in settings.HANDLERS:
         if h_config.task_type in handlers_funcs:
             h_config.available_workers += 1
@@ -126,26 +146,45 @@ async def __store_handlers(
     if raw_stored_handlers:
         stored_handlers = [HandlerConfig.model_validate(h)
                            for h in json.loads(raw_stored_handlers)]
-        stored_types = {
-            h.task_type for h in stored_handlers if h.available}
-        current_types = {
-            h.task_type for h in settings.HANDLERS if h.available}
+        stored_versions = [
+            f'{h.task_type}:{h.version}' for h in stored_handlers]
 
-        if stored_types != current_types:
-            missing = current_types - stored_types
-            extra = stored_types - current_types
-            error_msg = ('‼️ Handlers mismatch with Redis! '
-                         f'Missing: {missing}, Extra: {extra}')
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+        for h_config in settings.HANDLERS:
+            if h_config.available_workers == 0:
+                continue
 
-        await redis.incr('worker_count')
-    else:
-        async with redis.pipeline() as pipe:
-            await (pipe.set('handlers', serialized_handlers)
-                       .set('worker_count', 1)
-                       .execute())
-        logger.info('ℹ️ Initialized Redis with new handlers')
+            h_type_with_version = f'{h_config.task_type}:{h_config.version}'
+            if h_type_with_version not in stored_versions:
+                continue
+
+            same_stored_handler = [h for h in stored_handlers
+                                   if h.task_type == h_config.task_type
+                                   and h.version == h_config.version][0]
+            h_config.available_workers += same_stored_handler.available_workers
+
+            logger.info(f'ℹ️ Updated workers count for '
+                        f'{h_config.task_type}:{h_config.version}')
+
+        settings_config_versions = {
+            f'{h.task_type}:{h.version}' for h in stored_handlers}
+        for h_config, h_version in zip(stored_handlers, stored_versions):
+            if (h_config.task_type
+                    not in [h.task_type for h in settings.HANDLERS]
+                    or h_version not in settings_config_versions):
+                settings.HANDLERS.append(h_config)
+
+    handlers_data = [h.model_dump() for h in settings.HANDLERS]
+    serialized_handlers = json.dumps(handlers_data)
+
+    async with redis.pipeline() as pipe:
+        if raw_stored_handlers:
+            await pipe.incr('worker_count')
+        else:
+            await pipe.set('worker_count', 1)
+        await pipe.set('handlers', serialized_handlers)
+        await pipe.execute()
+
+    logger.info(f'ℹ️ {worker.id} handlers successfully stored in Redis')
 
 
 async def heartbeat(worker: Worker):
@@ -162,13 +201,14 @@ async def heartbeat(worker: Worker):
 async def __worker_loop(
         worker: Worker, handlers_funcs: dict[str, Callable[[Task], Answer]]):
     """Start main worker processing loop"""
+    task_type_queues = [
+        f'task_queue:{task_type}' for task_type in handlers_funcs.keys()]
     while not worker.shutdown_event.is_set():
         try:
-            task_id = await worker.redis.brpoplpush(
-                'task_queue', 'processing_queue', timeout=1)
+            source_queue, task_id = await worker.redis.brpop(
+                task_type_queues, timeout=1)
             if not task_id:
                 continue
-            logger.info(f'ℹ️ Received task: {task_id}')
 
             logger.info(f'ℹ️ Received task: {task_id} from {source_queue}')
             async with worker.redis.pipeline() as pipe:
@@ -181,6 +221,10 @@ async def __worker_loop(
         except asyncio.CancelledError:
             logger.info('ℹ️ Worker loop cancelled')
             break
+        except asyncio.TimeoutError:
+            await asyncio.sleep(1)
+        except TypeError:
+            await asyncio.sleep(1)
         except Exception as e:
             logger.error(f'‼️ Worker error: {e}')
             await asyncio.sleep(1)
@@ -197,7 +241,7 @@ async def __process_task(
                           if h.task_type == task.task_type][0]
         task.task_type_version = handler_config.version
 
-        if not handler:
+        if not handler:  # TODO move task to pending?
             raise ValueError(f'Unsupported task type: {task.task_type}')
 
         logger.debug(f'⚙️ Processing prompt: {task.prompt}')
