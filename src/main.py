@@ -61,10 +61,14 @@ class Worker:
             await self.redis.delete(self.id)
             current_workers = int(await self.redis.decr('worker_count'))
             if current_workers <= 0:
-                async with self.redis.pipeline() as pipe:
-                    await pipe.delete('handlers')
-                    await pipe.delete('worker_count')
-                    await pipe.execute()
+                redis_handlers = [
+                    HandlerConfig.model_validate(h)
+                    for h in json.loads(await self.redis.get('handlers'))]
+                for handler in redis_handlers:
+                    handler.available_workers = 0
+                serialized_handlers = json.dumps(
+                    [h.model_dump() for h in redis_handlers])
+                await self.redis.set('handlers', serialized_handlers)
 
             else:
                 # TODO: rework with set every handler standalone
