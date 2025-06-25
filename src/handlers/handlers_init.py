@@ -1,4 +1,5 @@
 import importlib
+import time
 from typing import Callable
 
 from loguru import logger
@@ -16,16 +17,32 @@ def import_handler(import_string: str) -> Callable[[Task], Answer]:
 
 
 def verify_handlers(
-        handlers_list: list[HandlerConfig]) -> dict[str, Callable[[Task], Answer]]:
+        handlers_list: list[HandlerConfig]
+) -> dict[str, Callable[[Task], Answer]]:
     """Verify and register handlers"""
     test_task = Task(prompt='Привет')
     verified_handlers: dict[str, Callable[[Task], Answer]] = {}
     for handler in handlers_list:
         try:
-            handler_func = import_handler(handler.import_path)
-            handler_func(test_task)  # test launch
-            verified_handlers[handler.task_type] = handler_func
-            logger.info(f'✅ Обработчик "{handler.name}" зарегистрирован')
+            for attempt in range(3):
+                try:
+                    handler_func = import_handler(handler.import_path)
+                    handler_func(test_task)  # test launch
+                    verified_handlers[handler.task_type] = handler_func
+                    logger.info(
+                        f'✅ Обработчик "{handler.name}" зарегистрирован')
+                    break
+                except ImportError:
+                    raise
+                except Exception as e:
+                    if attempt == 2:
+                        raise e
+                    time.sleep(3)
+
+        except ImportError as e:
+            logger.warning(
+                f'⚠️ Не удалось импортировать обработчик '
+                f'"{handler.name}": {e}')
         except Exception as e:
             logger.warning(
                 f'⚠️ LLM обработчик "{handler.name}" недоступен: {e}')
