@@ -71,8 +71,13 @@ class Worker:
                 await self.redis.set('handlers', serialized_handlers)
 
             else:
-                # TODO: rework with set every handler standalone
-                #  so we can decrement them separately (handler:type:version)
+                # TODO: rework with set every worker standalone
+                #  so we can decrement them separately
+                #  (worker:task_type,version)
+                #  добавить проверку соответствия redis и текщуего воркера
+                #  (asyncio task), не разрешать отрицательные значения воркеров
+                #  починить завершения воркеров в даталабе, перенести
+                #  функционал обновления списка обработчиков на backend
                 redis_handlers = [
                     HandlerConfig.model_validate(h)
                     for h in json.loads(await self.redis.get('handlers'))]
