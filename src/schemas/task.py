@@ -1,9 +1,9 @@
 from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from schemas.answer import Answer
-from schemas.feedback import TaskFeedbackType, TaskFeedback
+from schemas.feedback import TaskFeedback, TaskFeedbackType
 
 
 class TaskStatus(str, Enum):
@@ -18,8 +18,7 @@ class Task(BaseModel):
     task_id: str = ''
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
-    task_type: str = ''
-    task_type_version: str = ''
+    handler_id: str = ''
     user_id: str = ''
     short_task_id: str = ''
     queued_at: str = ''
@@ -32,3 +31,13 @@ class Task(BaseModel):
     current_position: int = 0
     feedback: TaskFeedback = TaskFeedbackType.NEUTRAL
     worker_processing_time: float = 0
+
+    @computed_field(return_type=str)
+    @property
+    def task_type(self):
+        return self.handler_id.split(':')[0]
+
+    @computed_field(return_type=str)
+    @property
+    def task_type_version(self):
+        return self.handler_id.split(':')[1]
