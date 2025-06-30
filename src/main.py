@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import signal
 import sys
 import time
@@ -21,7 +20,7 @@ logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 class Worker:
     def __init__(self):
         self.started = False
-        self.id = f'worker:{os.getpid()}'
+        self.id = f'worker:{str(time.time()).replace(".", "")}'
         self.redis = Redis(
             host=settings.HOST,
             port=settings.REDIS_PORT,
