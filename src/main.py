@@ -31,12 +31,16 @@ class Worker:
         )
         self.tasks = set()
         self.shutdown_event = asyncio.Event()
+        self.handlers = ''
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.cleanup()
+
+    async def setup_handlers(self):
+        await self.redis.setex(self.id, 120, self.handlers)
 
     async def cleanup(self):
         if not self.started:
@@ -113,13 +117,13 @@ async def __store_handlers(
         f'ℹ️ Available worker handlers:'
         f' {[h.handler_id for h in settings.HANDLERS]}')
 
-    json_worker_handlers = json.dumps(
+    worker.handlers = json.dumps(
         [h.handler_id for h in settings.HANDLERS])
     json_stored_handlers_configs = await __get_handlers_configs(redis)
 
+    await worker.setup_handlers()
     async with redis.pipeline() as pipe:
         await pipe.set('handlers_configs', json_stored_handlers_configs)
-        await pipe.setex(worker.id, 30, json_worker_handlers)
         await pipe.lpush('workers', worker.id)
         await pipe.execute()
 
@@ -150,8 +154,9 @@ async def heartbeat(worker: Worker):
     """Update worker alive status"""
     while not worker.shutdown_event.is_set():
         try:
-            await worker.redis.expire(worker.id, 30)
-            await asyncio.sleep(15)
+            await worker.setup_handlers()
+            await asyncio.sleep(30)
+            logger.debug('ℹ️ Heartbeat sent')
         except Exception as e:
             logger.warning(f'⚠️ Heartbeat failed: {e}')
             break
