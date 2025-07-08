@@ -1,8 +1,11 @@
+from functools import cached_property
 from pathlib import Path
 from typing import Tuple, Type
 
-from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
-                               SettingsConfigDict, YamlConfigSettingsSource)
+from pydantic import Field
+from pydantic_settings import (
+    BaseSettings, PydanticBaseSettingsSource,
+    SettingsConfigDict, YamlConfigSettingsSource)
 
 from schemas.handler import HandlerConfig
 
@@ -17,10 +20,15 @@ class Settings(BaseSettings):
     HOST: str = '127.0.0.1'
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
+    REDIS_STORE_DAYS: Field(default=7, gt=0)
 
     MODEL_PATH: str = ''
     MAX_RETRIES: int = 3
     HANDLERS: list[HandlerConfig]
+
+    @cached_property
+    def redis_store_seconds(self):
+        return self.REDIS_STORE_DAYS * 24 * 60 * 60
 
     @classmethod
     def settings_customise_sources(

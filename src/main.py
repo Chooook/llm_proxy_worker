@@ -219,7 +219,10 @@ async def __process_task(
         logger.debug(f'⚙️ Result: {result}')
 
         async with redis.pipeline() as pipe:
-            await pipe.setex(f'task:{task_id}', 86400, task.model_dump_json())
+            await pipe.setex(
+                f'task:{task_id}',
+                settings.redis_store_seconds,
+                task.model_dump_json())
             await pipe.lrem('processing_queue', 1, task_id)
             await pipe.execute()
 
@@ -262,7 +265,10 @@ async def __handle_task_error(redis: Redis, task_id: str, error: Exception):
             async with redis.pipeline() as pipe:
                 await pipe.lrem('processing_queue', 1, task_id)
                 await pipe.rpush('dead_letters', task_id)
-                await pipe.setex(f'task:{task_id}', 86400, task_data)
+                await pipe.setex(
+                    f'task:{task_id}',
+                    settings.redis_store_seconds,
+                    task_data)
                 await pipe.execute()
 
             logger.error(f'‼️ Task {task_id} moved to DLQ: {error_msg}')
@@ -272,7 +278,10 @@ async def __handle_task_error(redis: Redis, task_id: str, error: Exception):
                 await pipe.lrem('processing_queue', 1, task_id)
                 await pipe.rpush('task_queue', task_id)
                 await pipe.lpush(f'task_queue:{task.handler_id}', task_id)
-                await pipe.setex(f'task:{task_id}', 86400, task_data)
+                await pipe.setex(
+                    f'task:{task_id}',
+                    settings.redis_store_seconds,
+                    task_data)
                 await pipe.execute()
 
             logger.warning(

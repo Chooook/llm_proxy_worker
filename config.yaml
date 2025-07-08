@@ -3,6 +3,7 @@ DEBUG: False
 HOST: 127.0.0.1
 REDIS_PORT: 6379
 REDIS_DB: 0
+REDIS_EXPIRE_DAYS: 14
 MODEL_PATH: '../models/Nxcode-CQ-7B-orpo.fp16.gguf'
 HANDLERS:
   - name: ИА СПК
