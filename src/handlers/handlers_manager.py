@@ -73,6 +73,7 @@ class HandlerManager:
                     f'Handler {handler_id} not found in configuration')
                 return None
 
+            # FIXME: symbol : not allowed in windows dir names
             handler_dir = self.base_dir / handler_id
             if handler_config.git_repo:
                 if not await self.ensure_repo(handler_dir, handler_config):
