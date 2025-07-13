@@ -2,7 +2,6 @@ from functools import cached_property
 from pathlib import Path
 from typing import Tuple, Type
 
-from pydantic import Field
 from pydantic_settings import (
     BaseSettings, PydanticBaseSettingsSource,
     SettingsConfigDict, YamlConfigSettingsSource)
@@ -17,14 +16,16 @@ class Settings(BaseSettings):
     LOGLEVEL: str
     DEBUG: bool = False
 
-    HOST: str = '127.0.0.1'
+    REDIS_HOST: str = '127.0.0.1'
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
-    REDIS_STORE_DAYS: Field(default=7, gt=0)
-
-    MODEL_PATH: str = ''
+    REDIS_STORE_DAYS: int = 7
     MAX_RETRIES: int = 3
+
     HANDLERS: list[HandlerConfig]
+    HANDLER_PORT_RANGE: Tuple[int, int]
+    HANDLER_INACTIVITY_TIMEOUT: int
+    MAX_CONCURRENT_TASKS: int = 10
 
     @cached_property
     def redis_store_seconds(self):
@@ -32,12 +33,12 @@ class Settings(BaseSettings):
 
     @classmethod
     def settings_customise_sources(
-        cls,
-        settings_cls: Type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
+            cls,
+            settings_cls: Type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
     ) -> Tuple[PydanticBaseSettingsSource, ...]:
         return (YamlConfigSettingsSource(settings_cls),)
 
