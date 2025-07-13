@@ -1,14 +1,16 @@
 import asyncio
 import json
+import os
 import signal
 import sys
 import time
-from typing import Callable
+from typing import Dict
 
+import httpx
 from loguru import logger
 from redis.asyncio import Redis
 
-from handlers import verify_handlers
+from handlers.handlers_manager import HandlerManager
 from schemas.answer import Answer
 from schemas.handler import HandlerConfig
 from schemas.task import Task, TaskStatus
@@ -21,8 +23,8 @@ class Worker:
     def __init__(self):
         self.started = False
         self.id = f'worker:{str(time.time()).replace(".", "")}'
-        self.redis = Redis(
-            host=settings.HOST,
+        self.redis = Redis(  # TODO add redis connection pool
+            host=settings.REDIS_HOST,
             port=settings.REDIS_PORT,
             db=settings.REDIS_DB,
             socket_timeout=10,
@@ -32,6 +34,8 @@ class Worker:
         self.tasks = set()
         self.shutdown_event = asyncio.Event()
         self.handlers = ''
+        self.handler_manager = HandlerManager()
+        self.valid_handlers: Dict[str, HandlerConfig] = {}
 
     async def __aenter__(self):
         return self
@@ -60,7 +64,8 @@ class Worker:
 
         try:
             await self.redis.delete(self.id)
-
+            await self.redis.lrem('workers', 0, self.id)
+            await self.handler_manager.cleanup()
         except Exception as e:
             logger.error(f'‼️ Cleanup error: {e}')
         finally:
@@ -75,6 +80,12 @@ class Worker:
 
 
 async def run_worker():
+    git_login = os.getenv('GIT_LOGIN')
+    git_pass = os.getenv('GIT_PASS')
+    if not any([git_login, git_pass]):
+        logger.warning(
+            '⚠️ Git credentials not set in env, repository access may fail')
+
     async with Worker() as worker:
         if sys.platform != 'win32':
             loop = asyncio.get_running_loop()
@@ -82,13 +93,14 @@ async def run_worker():
                 loop.add_signal_handler(sig, worker.shutdown_event.set)
 
         try:
-            handlers_funcs = verify_handlers(settings.HANDLERS)
+            worker.create_task(
+                worker.handler_manager.monitor_inactive_handlers())
 
-            await __store_handlers(worker, handlers_funcs)
+            await __store_handlers(worker)
             worker.started = True
             worker.create_task(heartbeat(worker))
 
-            await __worker_loop(worker, handlers_funcs)
+            await __worker_loop(worker)
 
         except asyncio.CancelledError:
             logger.info('ℹ️ Worker stopped gracefully')
@@ -97,14 +109,22 @@ async def run_worker():
             raise
 
 
-async def __store_handlers(
-        worker:Worker, handlers_funcs: dict[str, Callable[[Task], Answer]]):
+async def __store_handlers(worker: Worker):
     redis = worker.redis
     """Store and verify handlers in Redis"""
     to_remove = []
+    valid_handlers = {}
+
     for h_config in settings.HANDLERS:
-        if h_config.handler_id not in handlers_funcs:
+        # Проверяем работоспособность обработчика
+        if await worker.handler_manager.verify_handler(h_config.handler_id):
+            valid_handlers[h_config.handler_id] = h_config
+        else:
+            logger.error('‼️ Handler validation failed for '
+                         f'{h_config.handler_id}')
             to_remove.append(h_config)
+
+    # Удаляем нерабочие обработчики
     for h_config in to_remove:
         settings.HANDLERS.remove(h_config)
 
@@ -117,8 +137,9 @@ async def __store_handlers(
         f'ℹ️ Available worker handlers:'
         f' {[h.handler_id for h in settings.HANDLERS]}')
 
-    worker.handlers = json.dumps(
-        [h.handler_id for h in settings.HANDLERS])
+    worker.handlers = json.dumps([h.handler_id for h in settings.HANDLERS])
+    worker.valid_handlers = valid_handlers
+
     json_stored_handlers_configs = await __get_handlers_configs(redis)
 
     await worker.setup_handlers()
@@ -162,25 +183,44 @@ async def heartbeat(worker: Worker):
             break
 
 
-async def __worker_loop(
-        worker: Worker, handlers_funcs: dict[str, Callable[[Task], Answer]]):
+async def __worker_loop(worker: Worker):
     """Start main worker processing loop"""
+    # Семафор для ограничения количества одновременно выполняемых задач
+    concurrency_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_TASKS)
+
+    # Формируем очереди только для действительных обработчиков
     handler_id_queues = [
-        f'task_queue:{handler_id}' for handler_id in handlers_funcs.keys()]
+        f'task_queue:{handler_id}'
+        for handler_id in worker.valid_handlers.keys()
+    ]
+
     while not worker.shutdown_event.is_set():
         try:
-            source_queue, task_id = await worker.redis.brpop(
-                handler_id_queues, timeout=1)
-            if not task_id:
+            result = await worker.redis.brpop(handler_id_queues, timeout=1)
+            if not result:
                 continue
 
-            logger.info(f'ℹ️ Received task: {task_id} from {source_queue}')
+            source_queue, task_id = result
+            # Извлекаем handler_id из имени очереди
+            handler_id = source_queue.split(':', 1)[1]
+
+            logger.info(
+                f'ℹ️ Received task: {task_id} for handler {handler_id}')
             async with worker.redis.pipeline() as pipe:
                 await pipe.lrem('task_queue', 0, task_id)
                 await pipe.lpush('processing_queue', task_id)
                 await pipe.execute()
 
-            await __process_task(worker.redis, task_id, handlers_funcs)
+            # Запускаем обработку задачи в отдельной асинхронной задаче
+            worker.create_task(
+                __process_task_with_semaphore(
+                    concurrency_semaphore,
+                    worker.redis,
+                    task_id,
+                    worker.handler_manager,
+                    handler_id
+                )
+            )
 
         except asyncio.CancelledError:
             logger.info('ℹ️ Worker loop cancelled')
@@ -194,29 +234,54 @@ async def __worker_loop(
             await asyncio.sleep(1)
 
 
+async def __process_task_with_semaphore(
+        semaphore: asyncio.Semaphore,
+        redis: Redis,
+        task_id: str,
+        handler_manager: HandlerManager,
+        handler_id: str
+):
+    """Обрабатывает задачу с ограничением параллелизма"""
+    async with semaphore:
+        await __process_task(redis, task_id, handler_manager, handler_id)
+
+
 async def __process_task(
         redis: Redis,
         task_id: str,
-        handlers_funcs: dict[str, Callable[[Task], Answer]]):
+        handler_manager: HandlerManager,
+        handler_id: str  # Явно передаем handler_id
+):
     try:
         task = await __get_task(redis, task_id)
-        handler = handlers_funcs.get(task.handler_id)
-
-        if not handler:  # TODO move task to pending?
-            raise ValueError(f'Unsupported task type: {task.handler_id}')
-
-        logger.debug(f'⚙️ Processing prompt: {task.prompt}')
         start_time = time.time()
-        result = handler(task)
-        processing_time = time.time() - start_time
 
-        if isinstance(result, str):
-            result = Answer(text=result)
+        # Получаем URL обработчика (запускает при необходимости)
+        url = await handler_manager.get_handler_url(handler_id)
+        if not url:
+            raise Exception(f'Handler {handler_id} is not available')
+
+        # Отправляем запрос в FastAPI обработчик
+        # TODO сделать один общий клиент в Worker
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(url, json=task.model_dump())
+            if response.status_code != 200:
+                raise Exception(
+                    f'Handler error: {response.status_code} - {response.text}')
+
+            result_data = response.json()['result']
+
+        # Обрабатываем результат
+        if isinstance(result_data, str):
+            result = Answer(text=result_data)
+        elif isinstance(result_data, dict):
+            result = Answer.model_validate(result_data)
+        else:
+            raise TypeError(f'Unexpected result type: {type(result_data)}')
 
         task.status = TaskStatus.COMPLETED
         task.result = result
-        task.worker_processing_time = processing_time
-        logger.debug(f'⚙️ Result: {result}')
+        task.worker_processing_time = time.time() - start_time
 
         async with redis.pipeline() as pipe:
             await pipe.setex(
@@ -227,7 +292,8 @@ async def __process_task(
             await pipe.execute()
 
         logger.success(
-            f'✅️ Task {task_id} completed in {processing_time:.2f}s')
+            f'✅️ Task {task_id} completed '
+            f'in {task.worker_processing_time:.2f}s')
 
     except Exception as e:
         await __handle_task_error(redis, task_id, e)
