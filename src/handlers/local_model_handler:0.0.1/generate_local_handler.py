@@ -1,14 +1,10 @@
 from llama_cpp import (ChatCompletionRequestSystemMessage,
                        ChatCompletionRequestUserMessage, Llama)
 
-from schemas.answer import Answer
-from schemas.task import Task
-from settings import settings
-
 system_prompt = 'Ты — помощник, который даёт краткие ответы.'
 
 
-def handle_task_with_local_model(task: Task) -> Answer:
+def handle_task_with_local_model(task):
     """Handle task with local model inference"""
 
     # lazy model inference:
@@ -20,7 +16,7 @@ def handle_task_with_local_model(task: Task) -> Answer:
         content=system_prompt)
     user_message = ChatCompletionRequestUserMessage(
         role='user',
-        content=task.prompt)
+        content=task['prompt'])
 
     try:
         output = handle_task_with_local_model.llm.create_chat_completion(
@@ -29,14 +25,15 @@ def handle_task_with_local_model(task: Task) -> Answer:
         raise RuntimeError(
             f'⚠️ Ошибка обработки с помощью локальной модели: {str(e)}')
 
-    answer = Answer(text=output['choices'][0]['message']['content'].strip())
+    answer = output['choices'][0]['message']['content'].strip()
     return answer
 
 
 def load_model() -> Llama:
     try:
+        # FIXME remove hardcoded model path
         model = Llama(
-            model_path=settings.MODEL_PATH,
+            model_path='../../../models/Nxcode-CQ-7B-orpo.fp16.gguf',
             n_ctx=65536,
             n_thread=12,
             n_batch=512,
