@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "asyncio-atexit>=1.0.1",
+    "httpx>=0.28.1",
     "llama-cpp-python>=0.3.9",
     "loguru>=0.7.3",
     "pydantic>=2.11.4",
