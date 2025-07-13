@@ -1,24 +1,49 @@
 LOGLEVEL: DEBUG
 DEBUG: False
-HOST: 127.0.0.1
+REDIS_HOST: 127.0.0.1
 REDIS_PORT: 6379
 REDIS_DB: 0
-REDIS_EXPIRE_DAYS: 14
-MODEL_PATH: '../models/Nxcode-CQ-7B-orpo.fp16.gguf'
+#REDIS_EXPIRE_DAYS: 14
+HANDLER_PORT_RANGE: [8001, 8050]
+HANDLER_INACTIVITY_TIMEOUT: 1800  # 30 минут
+
 HANDLERS:
-  - name: ИА СПК
-    task_type: generate_spc
-    import_path: 'handlers.spc_fast.multi_agent.main:run_agent'
+  - name: 'ИА СПК'
+    task_type: 'generate_spc'
+    interface_func_module: 'spc_fast.multi_agent.main'
+    interface_func_name: 'run_agent'
+    git_repo: 'https://github.com/your-org/spc_handler.git'
     version: '0.0.1'
-  - name: ИА PM
-    task_type: generate_pm
-    import_path: 'handlers.pm_handler:answer_with_rag'
+    description: 'Описание ИА СПК'
+
+  - name: 'ИА СПК (тестовая версия)'
+    task_type: 'generate_spc'
+    interface_func_module: 'multi_agent.main'
+    interface_func_name: 'run_agent'
+    git_repo: 'https://github.com/your-org/spc_handler_v2.git'
+    git_branch: 'dev'
+    version: '0.0.2dev'
+    description: 'Новая версия ИА СПК'
+
+  - name: 'ИА PM'
+    task_type: 'generate_pm'
+    interface_func_module: 'rag'
+    interface_func_name: 'answer_with_rag'
+    git_repo: 'https://github.com/your-org/pm_handler.git'
     version: '0.0.1'
-  - name: Локальная модель
-    task_type: generate_local
-    import_path: 'handlers.local_model_handler:handle_task_with_local_model'
+    description: 'Описание ИА PM'
+
+  - name: 'Локальная модель'
+    task_type: 'local_model_handler'
+    interface_func_module: 'generate_local_handler'
+    interface_func_name: 'handle_task_with_local_model'
     version: '0.0.1'
-  - name: Перемешать буквы
-    task_type: dummy
-    import_path: 'handlers.dummy_handler:handle_task_dummy'
+    description: 'Описание локальной модели'
+
+  - name: 'Перемешать буквы'
+    task_type: 'dummy_handler'
+    interface_func_module: 'dummy_handler'
+    interface_func_name: 'handle_task_dummy'
     version: '0.0.1'
+    description: 'Описание dummy'
+# TODO: добавить требование на self-check типов обработчиков отдельной функцией или модулем
