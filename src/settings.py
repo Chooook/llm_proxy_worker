@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     REDIS_HOST: str = '127.0.0.1'
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
-    REDIS_STORE_DAYS: int = 7
+    REDIS_EXPIRE_DAYS: int = 7
     MAX_RETRIES: int = 3
 
     HANDLERS: list[HandlerConfig]
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     @cached_property
     def redis_store_seconds(self):
-        return self.REDIS_STORE_DAYS * 24 * 60 * 60
+        return self.REDIS_EXPIRE_DAYS * 24 * 60 * 60
 
     @classmethod
     def settings_customise_sources(
