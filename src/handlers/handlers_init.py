@@ -30,7 +30,7 @@ def verify_handlers(
                     handler_func(test_task)  # test launch
                     verified_handlers[handler.handler_id] = handler_func
                     logger.info(
-                        f'✅ Обработчик "{handler.handler_id}" готов')
+                        f'✅️ Handler "{handler.handler_id}" is ready')
                     break
                 except ImportError:
                     raise
@@ -41,10 +41,10 @@ def verify_handlers(
 
         except ImportError as e:
             logger.warning(
-                f'⚠️ Не удалось импортировать обработчик '
+                f'⚠️ Handler import error '
                 f'"{handler.handler_id}": {e}')
         except Exception as e:
             logger.warning(
-                f'⚠️ LLM обработчик "{handler.handler_id}" недоступен: {e}')
+                f'⚠️ Handler "{handler.handler_id}" is unavailable: {e}')
 
     return verified_handlers

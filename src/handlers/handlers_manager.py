@@ -43,7 +43,8 @@ class HandlerManager:
                 self.verified_handlers[handler_id] = True
                 return True
         except Exception as e:
-            logger.error(f'Handler verification failed for {handler_id}: {e}')
+            logger.error(f'‼️ Handler verification failed '
+                f'for {handler_id}: {e}')
 
         self.verified_handlers[handler_id] = False
         return False
@@ -70,7 +71,7 @@ class HandlerManager:
             )
             if not handler_config:
                 logger.error(
-                    f'Handler {handler_id} not found in configuration')
+                    f'‼️ Handler {handler_id} not found in configuration')
                 return None
 
             # FIXME: symbol : not allowed in windows dir names
@@ -86,7 +87,7 @@ class HandlerManager:
 
             # Выбор порта
             if not self.port_pool:
-                logger.error('No available ports for handler')
+                logger.error('‼️ No available ports for handler')
                 return None
             port = self.port_pool.pop()
 
@@ -103,7 +104,8 @@ class HandlerManager:
 
             # Проверка работоспособности
             if not await self.verify_handler_operation(port, handler_config):
-                logger.error(f'Handler {handler_id} failed operational check')
+                logger.error(f'‼️ Handler {handler_id} '
+                    f'failed operational check')
                 process.terminate()
                 await process.wait()
                 self.port_pool.add(port)
@@ -118,12 +120,12 @@ class HandlerManager:
                 'config': handler_config
             }
 
-            logger.info(f'Started handler {handler_id} on port {port}')
+            logger.info(f'ℹ️ Started handler {handler_id} on port {port}')
             return port
 
         except Exception:
             logger.error(
-                f'Error starting handler {handler_id}:\n'
+                f'‼️ Error starting handler {handler_id}:\n'
                 f'{traceback.format_exc()}'
             )
             # TODO traceback to logger.debug
@@ -140,7 +142,7 @@ class HandlerManager:
                 return await self.clone_repo(handler_dir, handler_config)
         except Exception:
             logger.error(
-                f'Repository operation failed '
+                f'‼️ Repository operation failed '
                 f'for {handler_config.handler_id}:\n'
                 f'{traceback.format_exc()}'
             )
@@ -168,7 +170,7 @@ class HandlerManager:
 
             if process.returncode != 0:
                 logger.error(
-                    f'Git clone failed for {handler_config.handler_id}:\n'
+                    f'‼️ Git clone failed for {handler_config.handler_id}:\n'
                     f'Command: {" ".join(command)}\n'
                     f'Exit code: {process.returncode}\n'
                     f'stdout: {stdout.decode()}\n'
@@ -178,7 +180,7 @@ class HandlerManager:
             return True
         except Exception:
             logger.error(
-                f'Git clone exception for {handler_config.handler_id}:\n'
+                f'‼️ Git clone exception for {handler_config.handler_id}:\n'
                 f'{traceback.format_exc()}'
             )
             return False
@@ -200,7 +202,7 @@ class HandlerManager:
 
             if reset_process.returncode != 0:
                 logger.error(
-                    f'Git reset failed for {handler_config.handler_id}:\n'
+                    f'‼️ Git reset failed for {handler_config.handler_id}:\n'
                     f'stdout: {reset_stdout.decode()}\n'
                     f'stderr: {reset_stderr.decode()}'
                 )
@@ -216,7 +218,7 @@ class HandlerManager:
 
             if pull_process.returncode != 0:
                 logger.error(
-                    f'Git pull failed for {handler_config.handler_id}:\n'
+                    f'‼️ Git pull failed for {handler_config.handler_id}:\n'
                     f'stdout: {pull_stdout.decode()}\n'
                     f'stderr: {pull_stderr.decode()}'
                 )
@@ -225,7 +227,7 @@ class HandlerManager:
             return True
         except Exception:
             logger.error(
-                f'Git update exception for {handler_config.handler_id}:\n'
+                f'‼️ Git update exception for {handler_config.handler_id}:\n'
                 f'{traceback.format_exc()}'
             )
             return False
@@ -244,7 +246,7 @@ class HandlerManager:
             return url
         except Exception:
             logger.error(
-                f'Error augmenting URL with credentials:\n'
+                f'‼️ Error augmenting URL with credentials:\n'
                 f'{traceback.format_exc()}'
             )
             return url
@@ -284,7 +286,7 @@ async def health_check():
 
         except Exception:
             logger.error(
-                f'Error generating FastAPI app '
+                f'‼️ Error generating FastAPI app '
                 f'for {handler_config.handler_id}:\n'
                 f'{traceback.format_exc()}'
             )
@@ -302,7 +304,7 @@ async def health_check():
             return await self.verify_with_test_task(port, handler_config)
         except Exception:
             logger.error(
-                f'Handler verification failed '
+                f'‼️ Handler verification failed '
                 f'for {handler_config.handler_id}:\n'
                 f'{traceback.format_exc()}'
             )
@@ -324,7 +326,7 @@ async def health_check():
             return False
         except Exception:
             logger.error(
-                f'Health check failed for port {port}:\n'
+                f'‼️ Health check failed for port {port}:\n'
                 f'{traceback.format_exc()}'
             )
             return False
@@ -348,14 +350,14 @@ async def health_check():
                     if response.status_code == 500:
                         error_detail = response.json().get('detail', {})
                         logger.error(
-                            f'Test task failed '
+                            f'‼️ Test task failed '
                             f'for {handler_config.handler_id}:\n'
                             f'Error: {error_detail.get("error", "")}\n'
                             f'Traceback:\n{error_detail.get("traceback", "")}'
                         )
                     else:
                         logger.error(
-                            f'Test task failed '
+                            f'‼️ Test task failed '
                             f'for {handler_config.handler_id}: '
                             f'{response.status_code} - {response.text}'
                         )
@@ -364,7 +366,7 @@ async def health_check():
                 result = response.json()
                 if 'result' not in result:
                     logger.error(
-                        f'Invalid response format '
+                        f'‼️ Invalid response format '
                         f'from {handler_config.handler_id}: '
                         f'missing "result" field'
                     )
@@ -373,7 +375,7 @@ async def health_check():
                 return True
         except Exception:
             logger.error(
-                f'Test task verification failed '
+                f'‼️ Test task verification failed '
                 f'for {handler_config.handler_id}:\n'
                 f'{traceback.format_exc()}'
             )
@@ -394,7 +396,7 @@ async def health_check():
                 await self.stop_handler(handler_id)
         except Exception:
             logger.error(
-                f'Error stopping inactive handlers:\n'
+                f'‼️ Error stopping inactive handlers:\n'
                 f'{traceback.format_exc()}'
             )
 
@@ -416,11 +418,11 @@ async def health_check():
                     await process.wait()
 
             self.port_pool.add(info['port'])
-            logger.info(f'Stopped handler {handler_id} '
+            logger.info(f'ℹ️ Stopped handler {handler_id} '
                         f'on port {info["port"]}')
         except Exception:
             logger.error(
-                f'Error stopping handler {handler_id}:\n'
+                f'‼️ Error stopping handler {handler_id}:\n'
                 f'{traceback.format_exc()}'
             )
 
@@ -431,7 +433,7 @@ async def health_check():
                 await self.stop_handler(handler_id)
         except Exception:
             logger.error(
-                f'Error during cleanup:\n'
+                f'‼️ Error during cleanup:\n'
                 f'{traceback.format_exc()}'
             )
 
@@ -445,6 +447,6 @@ async def health_check():
                 break
             except Exception:
                 logger.error(
-                    f'Error in inactive handlers monitor:\n'
+                    f'‼️ Error in inactive handlers monitor:\n'
                     f'{traceback.format_exc()}'
                 )
