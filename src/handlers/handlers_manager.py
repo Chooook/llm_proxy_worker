@@ -1,6 +1,4 @@
 import asyncio
-import os
-import subprocess
 import time
 import traceback
 from pathlib import Path
@@ -9,8 +7,10 @@ from typing import Dict, Optional
 import httpx
 from loguru import logger
 
+from microservices.handler_service import generate_fastapi_app
 from schemas.task import Task
 from settings import settings
+from utils import git_utils
 
 
 class HandlerManager:
@@ -21,9 +21,6 @@ class HandlerManager:
         self.base_dir = Path(__file__).parent
         self.base_dir.mkdir(exist_ok=True, parents=True)
         self._lock = asyncio.Lock()
-        git_login = os.getenv('GIT_LOGIN')
-        git_pass = os.getenv('GIT_PASS')
-        self.git_credentials = f'{git_login}:{git_pass}'
         self.test_task = Task(
             handler_id='',
             prompt='Тестовый запрос',
@@ -64,7 +61,7 @@ class HandlerManager:
 
     async def start_handler(self, handler_id: str) -> Optional[int]:
         """Запускает FastAPI приложение для обработчика и возвращает порт"""
-        try:
+        try:  # TODO move to handler service
             handler_config = next(
                 (h for h in settings.HANDLERS if h.handler_id == handler_id),
                 None
@@ -77,13 +74,13 @@ class HandlerManager:
             # FIXME: symbol : not allowed in windows dir names
             handler_dir = self.base_dir / handler_id
             if handler_config.git_repo:
-                if not await self.ensure_repo(handler_dir, handler_config):
+                if not await git_utils.ensure_repo(handler_dir, handler_config):
                     return None
             else:
                 handler_dir.mkdir(exist_ok=True, parents=True)
 
             # Генерация FastAPI приложения
-            self.generate_fastapi_app(handler_dir, handler_config)
+            generate_fastapi_app(handler_dir, handler_config)
 
             # Выбор порта
             if not self.port_pool:
@@ -133,165 +130,6 @@ class HandlerManager:
                 self.port_pool.add(port)
             raise
 
-    async def ensure_repo(self, handler_dir: Path, handler_config) -> bool:
-        """Обеспечивает наличие актуальной версии репозитория"""
-        try:
-            if handler_dir.exists():
-                return await self.update_repo(handler_dir, handler_config)
-            else:
-                return await self.clone_repo(handler_dir, handler_config)
-        except Exception:
-            logger.error(
-                f'‼️ Repository operation failed '
-                f'for {handler_config.handler_id}:\n'
-                f'{traceback.format_exc()}'
-            )
-            # FIXME double traceback
-            raise
-
-    async def clone_repo(self, target_dir: Path, handler_config) -> bool:
-        """Клонирует Git репозиторий с ограничением глубины"""
-        try:
-            repo_url = self.augment_url_with_credentials(
-                handler_config.git_repo)
-            command = [
-                'git', 'clone',
-                '--depth', '1',
-                '--branch', handler_config.git_branch,
-                repo_url, str(target_dir)
-            ]
-
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
-
-            if process.returncode != 0:
-                logger.error(
-                    f'‼️ Git clone failed for {handler_config.handler_id}:\n'
-                    f'Command: {" ".join(command)}\n'
-                    f'Exit code: {process.returncode}\n'
-                    f'stdout: {stdout.decode()}\n'
-                    f'stderr: {stderr.decode()}'
-                )
-                return False
-            return True
-        except Exception:
-            logger.error(
-                f'‼️ Git clone exception for {handler_config.handler_id}:\n'
-                f'{traceback.format_exc()}'
-            )
-            return False
-
-    @staticmethod
-    async def update_repo(repo_dir: Path, handler_config) -> bool:
-        """Обновляет существующий репозиторий"""
-        try:
-            current_dir = os.getcwd()
-            os.chdir(repo_dir)
-
-            # Сброс изменений
-            reset_process = await asyncio.create_subprocess_exec(
-                'git', 'reset', '--hard', 'HEAD',
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            reset_stdout, reset_stderr = await reset_process.communicate()
-
-            if reset_process.returncode != 0:
-                logger.error(
-                    f'‼️ Git reset failed for {handler_config.handler_id}:\n'
-                    f'stdout: {reset_stdout.decode()}\n'
-                    f'stderr: {reset_stderr.decode()}'
-                )
-                return False
-
-            # Обновление репозитория
-            pull_process = await asyncio.create_subprocess_exec(
-                'git', 'pull', 'origin', handler_config.git_branch,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            pull_stdout, pull_stderr = await pull_process.communicate()
-
-            if pull_process.returncode != 0:
-                logger.error(
-                    f'‼️ Git pull failed for {handler_config.handler_id}:\n'
-                    f'stdout: {pull_stdout.decode()}\n'
-                    f'stderr: {pull_stderr.decode()}'
-                )
-                return False
-
-            return True
-        except Exception:
-            logger.error(
-                f'‼️ Git update exception for {handler_config.handler_id}:\n'
-                f'{traceback.format_exc()}'
-            )
-            return False
-        finally:
-            if current_dir:
-                os.chdir(current_dir)
-
-    def augment_url_with_credentials(self, url: str) -> str:
-        """Добавляет учетные данные в URL Git"""
-        try:
-            if not self.git_credentials or '@' in url:
-                return url
-
-            if url.startswith('https://'):
-                return f'https://{self.git_credentials}@{url[8:]}'
-            return url
-        except Exception:
-            logger.error(
-                f'‼️ Error augmenting URL with credentials:\n'
-                f'{traceback.format_exc()}'
-            )
-            return url
-
-    @staticmethod
-    def generate_fastapi_app(handler_dir: Path, handler_config):
-        """Генерирует файл FastAPI приложения с обработкой ошибок"""
-        try:
-            app_code = f'''
-import traceback
-from fastapi import FastAPI, HTTPException
-
-app = FastAPI()
-
-@app.post('/process')
-async def process_request(data: dict):
-    try:
-        from {handler_config.interface_func_module} import {handler_config.interface_func_name}
-        result = {handler_config.interface_func_name}(data)
-        return {{'result': result}}
-    except Exception as e:
-        error_detail = {{
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }}
-        raise HTTPException(
-            status_code=500,
-            detail=error_detail
-        )
-
-@app.get('/health')
-async def health_check():
-    return {{'status': 'ok'}}
-'''
-            app_file = handler_dir / 'handler_app.py'
-            app_file.write_text(app_code)
-
-        except Exception:
-            logger.error(
-                f'‼️ Error generating FastAPI app '
-                f'for {handler_config.handler_id}:\n'
-                f'{traceback.format_exc()}'
-            )
-            raise
-
     async def verify_handler_operation(self, port: int,
                                        handler_config) -> bool:
         """Проводит расширенную проверку работоспособности обработчика"""
@@ -313,7 +151,7 @@ async def health_check():
     @staticmethod
     async def check_handler_health(port: int, retries: int = 5) -> bool:
         """Проверяет доступность обработчика через healthcheck"""
-        try:
+        try:  # TODO move to handler service
             url = f'http://localhost:{port}/health'
             async with httpx.AsyncClient(timeout=5) as client:
                 for _ in range(retries):
@@ -402,7 +240,7 @@ async def health_check():
 
     async def stop_handler(self, handler_id: str):
         """Останавливает обработчик и освобождает порт"""
-        try:
+        try:  # TODO move to handler service
             if handler_id not in self.active_handlers:
                 return
 
