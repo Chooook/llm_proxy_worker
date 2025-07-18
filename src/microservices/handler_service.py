@@ -37,6 +37,11 @@ class HandlerService:
     def __init__(self, handler_config: BaseModel):
         self._handler_config = handler_config
 
+    def __dir__(self):
+        """Add _handler_config fields to dir for IDE autocomplete"""
+        return (list(super().__dir__())
+                + list(self._handler_config.model_fields.keys()))
+
     def __getattr__(self, name: str) -> Any:
         """Get handler config attrs"""
         return getattr(self._handler_config, name)
