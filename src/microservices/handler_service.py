@@ -3,6 +3,8 @@ from pathlib import Path
 from string import Template
 
 from loguru import logger
+from pydantic import BaseModel
+from typing_extensions import Any
 
 FASTAPI_HANDLER_TEMPLATE = Template('''
     import traceback
@@ -31,19 +33,26 @@ FASTAPI_HANDLER_TEMPLATE = Template('''
         return {'status': 'ok'}
 ''')
 
+class HandlerService:
+    def __init__(self, handler_config: BaseModel):
+        self._handler_config = handler_config
 
-def generate_fastapi_app(handler_dir: Path, handler_config):
-        """Генерирует файл FastAPI приложения"""
-        try:
-            app_code = FASTAPI_HANDLER_TEMPLATE.substitute(
-                module=handler_config.interface_func_module,
-                function=handler_config.interface_func_name)
-            app_file = handler_dir / 'handler_app.py'
-            app_file.write_text(app_code)
+    def __getattr__(self, name: str) -> Any:
+        """Get handler config attrs"""
+        return getattr(self._handler_config, name)
 
-        except Exception as e:
-            logger.error(
-                f'‼️ Error generating FastAPI app '
-                f'for {handler_config.handler_id}: {e}')
-            logger.debug(f'{traceback.format_exc()}')
-            raise
+    def generate_fastapi_app(self, handler_dir: Path):
+            """Generate FastAPI app file"""
+            try:
+                app_code = FASTAPI_HANDLER_TEMPLATE.substitute(
+                    module=self.interface_func_module,
+                    function=self.interface_func_name)
+                app_file = handler_dir / 'handler_app.py'
+                app_file.write_text(app_code)
+
+            except Exception as e:
+                logger.error(
+                    f'‼️ Error generating FastAPI app '
+                    f'for {self.handler_id}: {e}')
+                logger.debug(f'{traceback.format_exc()}')
+                raise

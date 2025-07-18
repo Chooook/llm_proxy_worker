@@ -7,7 +7,7 @@ from typing import Dict, Optional
 import httpx
 from loguru import logger
 
-from microservices.handler_service import generate_fastapi_app
+from microservices.handler_service import HandlerService
 from schemas.task import Task
 from settings import settings
 from utils import git_utils
@@ -80,7 +80,7 @@ class HandlerManager:
                 handler_dir.mkdir(exist_ok=True, parents=True)
 
             # Генерация FastAPI приложения
-            generate_fastapi_app(handler_dir, handler_config)
+            HandlerService(handler_config).generate_fastapi_app(handler_dir)
 
             # Выбор порта
             if not self.port_pool:
