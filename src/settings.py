@@ -1,6 +1,6 @@
 from functools import cached_property
 from pathlib import Path
-from typing import Tuple, Type
+from typing_extensions import Tuple, Type
 
 from pydantic_settings import (
     BaseSettings, PydanticBaseSettingsSource,
