@@ -10,6 +10,7 @@ from loguru import logger
 from typing_extensions import Any, Optional
 
 from schemas.handler import HandlerConfig
+from schemas.task import Task
 from settings import settings
 from utils import git_utils
 
@@ -53,6 +54,10 @@ class HandlerService:
         self.host = '127.0.0.1'
         self.port: Optional[int] = None
         self._fastapi_process: Optional[asyncio.subprocess.Process] = None
+        self.test_task = Task(
+            handler_id=handler_config.handler_id,
+            prompt='test_task',
+            task_id='test_task')
 
     def __dir__(self):
         """Add _handler_config fields to dir for IDE autocomplete"""
@@ -122,5 +127,47 @@ class HandlerService:
             logger.error(
                 f'‼️ Health check failed for handler service '
                 f'{self.handler_id}: {e}')
+            logger.debug(f'{traceback.format_exc()}')
+            return False
+
+    async def test_task_check(self) -> bool:
+        try:
+            url = f'http://{self.host}:{self.port}/process'
+
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(
+                    url, json=self.test_task.model_dump())
+
+                if response.status_code != 200:
+                    # Для 500 ошибок выводим детали из FastAPI
+                    if response.status_code == 500:
+                        error_detail = response.json().get('detail', {})
+                        logger.error(
+                            f'‼️ Test task failed '
+                            f'for {self.handler_id}:\n'
+                            f'Error: {error_detail.get("error", "")}')
+                        logger.debug(f'Traceback:\n'
+                                     f'{error_detail.get("traceback", "")}')
+                    else:
+                        logger.error(
+                            f'‼️ Test task failed '
+                            f'for {self.handler_id}: '
+                            f'{response.status_code} - {response.text}')
+                    return False
+
+                result = response.json()
+                if 'result' not in result:
+                    logger.error(
+                        f'‼️ Invalid response format '
+                        f'from {self.handler_id}: '
+                        f'missing "result" field')
+                    return False
+
+                return True
+
+        except Exception as e:
+            logger.error(
+                f'‼️ Test task verification failed '
+                f'for {self.handler_id}: {e}')
             logger.debug(f'{traceback.format_exc()}')
             return False
