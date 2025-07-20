@@ -18,8 +18,6 @@ class HandlerManager:
         self.active_handlers: Dict[str, dict] = {}
         self.verified_handlers: Dict[str, bool] = {}
         self.port_pool = set(range(*settings.HANDLER_PORT_RANGE))
-        self.base_dir = Path(__file__).parent
-        self.base_dir.mkdir(exist_ok=True, parents=True)
         self._lock = asyncio.Lock()
         self.test_task = Task(
             handler_id='',
@@ -71,16 +69,10 @@ class HandlerManager:
                     f'‼️ Handler {handler_id} not found in configuration')
                 return None
 
-            # FIXME: symbol : not allowed in windows dir names
-            handler_dir = self.base_dir / handler_id
-            if handler_config.git_repo:
-                if not await git_utils.ensure_repo(handler_dir, handler_config):
-                    return None
-            else:
-                handler_dir.mkdir(exist_ok=True, parents=True)
-
+            handler_service = HandlerService(handler_config)
+            await handler_service.prepare_handler_executables()
             # Генерация FastAPI приложения
-            HandlerService(handler_config).generate_fastapi_app(handler_dir)
+            handler_service.generate_fastapi_app()
 
             # Выбор порта
             if not self.port_pool:
