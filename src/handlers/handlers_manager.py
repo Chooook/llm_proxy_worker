@@ -80,17 +80,7 @@ class HandlerManager:
                 return None
             port = self.port_pool.pop()
             handler_service.port = port
-
-            # Запуск приложения
-            process = await asyncio.create_subprocess_exec(
-                'uvicorn', 'handler_app:app', '--host', '127.0.0.1', '--port',
-                str(port),
-                '--timeout-keep-alive',
-                str(settings.HANDLER_INACTIVITY_TIMEOUT),
-                cwd=str(handler_dir),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+            process = await handler_service.start_handler()
 
             # Проверка работоспособности
             if not await self.verify_handler_operation(port, handler_config):

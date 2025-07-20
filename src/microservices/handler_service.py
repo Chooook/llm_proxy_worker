@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 import traceback
@@ -8,6 +9,7 @@ from loguru import logger
 from typing_extensions import Any, Optional
 
 from schemas.handler import HandlerConfig
+from settings import settings
 from utils import git_utils
 
 FASTAPI_HANDLER_TEMPLATE = Template('''
@@ -40,12 +42,15 @@ FASTAPI_HANDLER_TEMPLATE = Template('''
 class HandlerService:
     def __init__(self, handler_config: HandlerConfig):
         self._handler_config = handler_config
-        self._handler_dir = (Path(os.getcwd())
-                             / 'handlers'
-                             / handler_config.handler_id.replace(':', '_'))
+        self._handler_dir = (
+                Path(os.getcwd())
+                / 'handlers'
+                / handler_config.handler_id.replace(':', '_')
+        ).resolve()
         # `:` is not allowed symbol for dir names in Windows
         self._app_file_path = self._handler_dir / 'handler_app.py'
         self.port: Optional[int] = None
+        self._fastapi_process: Optional[asyncio.subprocess.Process] = None
 
     def __dir__(self):
         """Add _handler_config fields to dir for IDE autocomplete"""
@@ -82,3 +87,19 @@ class HandlerService:
                     f'for {self.handler_id}: {e}')
                 logger.debug(f'{traceback.format_exc()}')
                 raise
+
+    async def start_handler(self):
+        if not self.port:
+            raise ValueError(f'Handler {self.handler_id} port is not set!')
+        if self._fastapi_process:
+            return self._fastapi_process
+        self._fastapi_process = await asyncio.create_subprocess_exec(
+            'uvicorn', 'handler_app:app',
+            '--host', '127.0.0.1',
+            '--port', str(self.port),
+            '--timeout-keep-alive', str(settings.HANDLER_INACTIVITY_TIMEOUT),
+            cwd=str(self._handler_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        return self._fastapi_process
