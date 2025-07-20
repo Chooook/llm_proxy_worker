@@ -5,6 +5,7 @@ import traceback
 from pathlib import Path
 from string import Template
 
+import httpx
 from loguru import logger
 from typing_extensions import Any, Optional
 
@@ -49,6 +50,7 @@ class HandlerService:
         ).resolve()
         # `:` is not allowed symbol for dir names in Windows
         self._app_file_path = self._handler_dir / 'handler_app.py'
+        self.host = '127.0.0.1'
         self.port: Optional[int] = None
         self._fastapi_process: Optional[asyncio.subprocess.Process] = None
 
@@ -63,7 +65,7 @@ class HandlerService:
 
     async def prepare_handler_executables(self):
         """Clone or copy handler executables to handler dir"""
-        if self.git_repo:
+        if self.git_repo:  # FIXME: update git_utils
             if not await git_utils.ensure_repo(self):
                 return False
         else:
@@ -95,7 +97,7 @@ class HandlerService:
             return self._fastapi_process
         self._fastapi_process = await asyncio.create_subprocess_exec(
             'uvicorn', 'handler_app:app',
-            '--host', '127.0.0.1',
+            '--host', self.host,
             '--port', str(self.port),
             '--timeout-keep-alive', str(settings.HANDLER_INACTIVITY_TIMEOUT),
             cwd=str(self._handler_dir),
@@ -103,3 +105,22 @@ class HandlerService:
             stderr=asyncio.subprocess.PIPE
         )
         return self._fastapi_process
+
+    async def healthcheck(self, retries: int = 5) -> bool:
+        try:
+            url = f'http://{self.host}:{self.port}/health'
+            async with httpx.AsyncClient(timeout=3) as client:
+                for _ in range(retries):
+                    try:
+                        response = await client.get(url)
+                        if response.status_code == 200:
+                            return True
+                    except (httpx.ConnectError, httpx.ReadTimeout):
+                        await asyncio.sleep(1)
+            return False
+        except Exception as e:
+            logger.error(
+                f'‼️ Health check failed for handler service '
+                f'{self.handler_id}: {e}')
+            logger.debug(f'{traceback.format_exc()}')
+            return False
