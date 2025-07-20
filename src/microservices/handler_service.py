@@ -5,7 +5,7 @@ from pathlib import Path
 from string import Template
 
 from loguru import logger
-from typing_extensions import Any
+from typing_extensions import Any, Optional
 
 from schemas.handler import HandlerConfig
 from utils import git_utils
@@ -45,6 +45,7 @@ class HandlerService:
                              / handler_config.handler_id.replace(':', '_'))
         # `:` is not allowed symbol for dir names in Windows
         self._app_file_path = self._handler_dir / 'handler_app.py'
+        self.port: Optional[int] = None
 
     def __dir__(self):
         """Add _handler_config fields to dir for IDE autocomplete"""

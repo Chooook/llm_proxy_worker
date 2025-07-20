@@ -79,6 +79,7 @@ class HandlerManager:
                 logger.error('‼️ No available ports for handler')
                 return None
             port = self.port_pool.pop()
+            handler_service.port = port
 
             # Запуск приложения
             process = await asyncio.create_subprocess_exec(
