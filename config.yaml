@@ -9,7 +9,8 @@ HANDLER_INACTIVITY_TIMEOUT: 1800  # 30 минут
 HANDLERS:
   - name: 'ИА СПК'
     task_type: 'generate_spc'
-    interface_func_module: 'spc_fast.multi_agent.main'
+    source_dir_name: 'spc_fast'
+    interface_func_module: 'multi_agent.main'
     interface_func_name: 'run_agent'
     git_repo: 'https://github.com/your-org/spc_handler.git'
     version: '0.0.1'
@@ -17,6 +18,7 @@ HANDLERS:
 
   - name: 'ИА СПК (тестовая версия)'
     task_type: 'generate_spc'
+    source_dir_name: 'spc_fast'
     interface_func_module: 'multi_agent.main'
     interface_func_name: 'run_agent'
     git_repo: 'https://github.com/your-org/spc_handler_v2.git'
@@ -26,6 +28,7 @@ HANDLERS:
 
   - name: 'ИА PM'
     task_type: 'generate_pm'
+    source_dir_name: 'pm_handler'
     interface_func_module: 'rag'
     interface_func_name: 'answer_with_rag'
     git_repo: 'https://github.com/your-org/pm_handler.git'
@@ -34,6 +37,7 @@ HANDLERS:
 
   - name: 'Локальная модель'
     task_type: 'local_model_handler'
+    source_dir_name: 'local_model_handler'
     interface_func_module: 'generate_local_handler'
     interface_func_name: 'handle_task_with_local_model'
     version: '0.0.1'
@@ -41,6 +45,7 @@ HANDLERS:
 
   - name: 'Перемешать буквы'
     task_type: 'dummy_handler'
+    source_dir_name: 'dummy_handler'
     interface_func_module: 'dummy_handler'
     interface_func_name: 'handle_task_dummy'
     version: '0.0.1'

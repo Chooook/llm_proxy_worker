@@ -9,10 +9,11 @@ class HandlerConfig(BaseModel):
 
     interface_func_module: str
     interface_func_name: str
-    interface_endpoint_url: str = ''
 
     db_loader_script_path: str = ''
     service_launcher_script_path: str = ''
+
+    source_dir_name: str = ''
 
     git_repo: str = ''
     git_branch: str = 'master'
