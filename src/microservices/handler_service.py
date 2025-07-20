@@ -1,10 +1,14 @@
+import os
+import shutil
 import traceback
 from pathlib import Path
 from string import Template
 
 from loguru import logger
-from pydantic import BaseModel
 from typing_extensions import Any
+
+from schemas.handler import HandlerConfig
+from utils import git_utils
 
 FASTAPI_HANDLER_TEMPLATE = Template('''
     import traceback
@@ -34,8 +38,13 @@ FASTAPI_HANDLER_TEMPLATE = Template('''
 ''')
 
 class HandlerService:
-    def __init__(self, handler_config: BaseModel):
+    def __init__(self, handler_config: HandlerConfig):
         self._handler_config = handler_config
+        self._handler_dir = (Path(os.getcwd())
+                             / 'handlers'
+                             / handler_config.handler_id.replace(':', '_'))
+        # `:` is not allowed symbol for dir names in Windows
+        self._app_file_path = self._handler_dir / 'handler_app.py'
 
     def __dir__(self):
         """Add _handler_config fields to dir for IDE autocomplete"""
@@ -46,13 +55,24 @@ class HandlerService:
         """Get handler config attrs"""
         return getattr(self._handler_config, name)
 
-    def generate_fastapi_app(self, handler_dir: Path):
+    async def prepare_handler_executables(self):
+        """Clone or copy handler executables to handler dir"""
+        if self.git_repo:
+            if not await git_utils.ensure_repo(self):
+                return False
+        else:
+            shutil.rmtree(self._handler_dir, ignore_errors=True)
+            self._handler_dir.mkdir(exist_ok=True, parents=True)
+            shutil.copytree(self.source_dir_name, self._handler_dir)
+        return True
+
+    def generate_fastapi_app(self):
             """Generate FastAPI app file"""
             try:
                 app_code = FASTAPI_HANDLER_TEMPLATE.substitute(
                     module=self.interface_func_module,
                     function=self.interface_func_name)
-                app_file = handler_dir / 'handler_app.py'
+                app_file = self._app_file_path
                 app_file.write_text(app_code)
 
             except Exception as e:
