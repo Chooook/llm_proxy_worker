@@ -111,6 +111,18 @@ class HandlerService:
         )
         return self._fastapi_process
 
+    async def verify_handler(self) -> bool:
+        try:
+            if not await self.healthcheck():
+                return False
+            return await self.test_task_check()
+        except Exception as e:
+            logger.error(
+                f'‼️ Handler verification failed '
+                f'for {self.handler_id}: {e}')
+            logger.debug(f'{traceback.format_exc()}')
+            return False
+
     async def healthcheck(self, retries: int = 5) -> bool:
         try:
             url = f'http://{self.host}:{self.port}/health'
