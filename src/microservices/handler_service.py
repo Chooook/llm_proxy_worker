@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import shutil
+import time
 import traceback
 from pathlib import Path
 from string import Template
@@ -51,14 +52,10 @@ class HandlerService:
                 / handler_config.handler_id.replace(':', '_')
         ).resolve()
         # `:` is not allowed symbol for dir names in Windows
-        self._app_file_path = self._handler_dir / 'handler_app.py'
         self.host = '127.0.0.1'
         self.port: Optional[int] = None
         self._fastapi_process: Optional[asyncio.subprocess.Process] = None
-        self.test_task = Task(
-            handler_id=handler_config.handler_id,
-            prompt='test_task',
-            task_id='test_task')
+        self.last_active_time: Optional[float] = None
 
     def __dir__(self):
         """Add _handler_config fields to dir for IDE autocomplete"""
@@ -100,12 +97,12 @@ class HandlerService:
 
     def generate_fastapi_app(self):
             """Generate FastAPI app file"""
+            app_file_path = self._handler_dir / 'handler_app.py'
             try:
                 app_code = FASTAPI_HANDLER_TEMPLATE.substitute(
                     module=self.interface_func_module,
                     function=self.interface_func_name)
-                app_file = self._app_file_path
-                app_file.write_text(app_code)
+                app_file_path.write_text(app_code)
 
             except Exception as e:
                 logger.error(
@@ -139,16 +136,18 @@ class HandlerService:
 
     async def stop(self):
         try:
-            if self.process.returncode is None:
-                self.process.terminate()
+            if (self._fastapi_process
+                    and self._fastapi_process.returncode is None):
+                self._fastapi_process.terminate()
                 try:
-                    await asyncio.wait_for(self.process.wait(), timeout=5.0)
+                    await asyncio.wait_for(
+                        self._fastapi_process.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
-                    self.process.kill()
-                    await self.process.wait()
-            logger.info(f'ℹ️ Stopped handler {self.handler_id} '
-                        f'on port {self.port}')
-            self._fastapi_process = None
+                    self._fastapi_process.kill()
+                    await self._fastapi_process.wait()
+                logger.info(f'ℹ️ Stopped handler {self.handler_id} '
+                            f'on port {self.port}')
+                self._fastapi_process = None
             return self.port
         except Exception as e:
             logger.error(
@@ -160,6 +159,7 @@ class HandlerService:
     async def verify(self) -> bool:
         try:
             if not await self._healthcheck():
+                await self.stop()
                 return False
             return await self._test_task_check()
         except Exception as e:
@@ -167,6 +167,7 @@ class HandlerService:
                 f'‼️ Handler verification failed '
                 f'for {self.handler_id}: {e}')
             logger.debug(f'{traceback.format_exc()}')
+            await self.stop()
             return False
 
     async def _healthcheck(self, retries: int = 5) -> bool:
@@ -189,40 +190,14 @@ class HandlerService:
             return False
 
     async def _test_task_check(self) -> bool:
+        test_task = Task(
+            handler_id=self.handler_id,
+            prompt='test_task',
+            task_id='test_task')
         try:
-            url = f'http://{self.host}:{self.port}/process'
-
-            async with httpx.AsyncClient(timeout=30) as client:
-                response = await client.post(
-                    url, json=self.test_task.model_dump())
-
-                if response.status_code != 200:
-                    # Для 500 ошибок выводим детали из FastAPI
-                    if response.status_code == 500:
-                        error_detail = response.json().get('detail', {})
-                        logger.error(
-                            f'‼️ Test task failed '
-                            f'for {self.handler_id}:\n'
-                            f'Error: {error_detail.get("error", "")}')
-                        logger.debug(f'Traceback:\n'
-                                     f'{error_detail.get("traceback", "")}')
-                    else:
-                        logger.error(
-                            f'‼️ Test task failed '
-                            f'for {self.handler_id}: '
-                            f'{response.status_code} - {response.text}')
-                    return False
-
-                result = response.json()
-                if 'result' not in result:
-                    logger.error(
-                        f'‼️ Invalid response format '
-                        f'from {self.handler_id}: '
-                        f'missing "result" field')
-                    return False
-
-                return True
-
+            await self.process_task(test_task)
+            self.last_active_time = time.time()
+            return True
         except Exception as e:
             logger.error(
                 f'‼️ Test task verification failed '
