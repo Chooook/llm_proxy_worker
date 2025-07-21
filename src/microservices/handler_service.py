@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import shutil
 import traceback
@@ -67,6 +68,24 @@ class HandlerService:
     def __getattr__(self, name: str) -> Any:
         """Get handler config attrs"""
         return getattr(self._handler_config, name)
+
+    async def process_task(self, task: Task, timeout: int = 420):
+        process_endpoint = f'http://{self.host}:{self.port}/process'
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                process_endpoint, json=task.model_dump())
+            if response.status_code != 200:
+                error_text = (f'‼️ Handler {self.handler_id} error: '
+                              f'{response.status_code} - {response.text}')
+                logger.error(error_text)
+                raise RuntimeError(error_text)
+
+        result_str = response.json().get('result', '')
+        try:
+            result = json.loads(result_str)
+        except json.JSONDecodeError:
+            result = result_str
+        return result
 
     async def prepare_executables(self):
         """Clone or copy handler executables to handler dir"""
@@ -140,9 +159,9 @@ class HandlerService:
 
     async def verify(self) -> bool:
         try:
-            if not await self.healthcheck():
+            if not await self._healthcheck():
                 return False
-            return await self.test_task_check()
+            return await self._test_task_check()
         except Exception as e:
             logger.error(
                 f'‼️ Handler verification failed '
@@ -150,7 +169,7 @@ class HandlerService:
             logger.debug(f'{traceback.format_exc()}')
             return False
 
-    async def healthcheck(self, retries: int = 5) -> bool:
+    async def _healthcheck(self, retries: int = 5) -> bool:
         try:
             url = f'http://{self.host}:{self.port}/health'
             async with httpx.AsyncClient(timeout=3) as client:
@@ -169,7 +188,7 @@ class HandlerService:
             logger.debug(f'{traceback.format_exc()}')
             return False
 
-    async def test_task_check(self) -> bool:
+    async def _test_task_check(self) -> bool:
         try:
             url = f'http://{self.host}:{self.port}/process'
 
