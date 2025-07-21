@@ -132,6 +132,8 @@ class HandlerService:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
+        if not await self.verify():
+            await self.stop()  # "stop" set _fastapi_process to None
         return self._fastapi_process
 
     async def stop(self):
@@ -159,7 +161,6 @@ class HandlerService:
     async def verify(self) -> bool:
         try:
             if not await self._healthcheck():
-                await self.stop()
                 return False
             return await self._test_task_check()
         except Exception as e:
@@ -167,7 +168,6 @@ class HandlerService:
                 f'‼️ Handler verification failed '
                 f'for {self.handler_id}: {e}')
             logger.debug(f'{traceback.format_exc()}')
-            await self.stop()
             return False
 
     async def _healthcheck(self, retries: int = 5) -> bool:
