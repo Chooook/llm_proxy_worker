@@ -67,6 +67,12 @@ class HandlerService:
         return getattr(self._handler_config, name)
 
     async def process_task(self, task: Task, timeout: int = 420):
+        if self._fastapi_process is None:
+            if not await self.start(restart=True):
+                error_text = f'‼️ Handler {self.handler_id} restart failure!'
+                logger.error(error_text)
+                raise RuntimeError(error_text)
+
         process_endpoint = f'http://{self.host}:{self.port}/process'
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
@@ -111,7 +117,7 @@ class HandlerService:
                 logger.debug(f'{traceback.format_exc()}')
                 raise
 
-    async def start(self, port: int = 0):
+    async def start(self, port: int = 0, restart: bool = False):
         if self._fastapi_process:
             logger.info(f'ℹ️ Handler {self.handler_id} '
                         f'already started on {self.port}')
@@ -132,8 +138,10 @@ class HandlerService:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        if not await self.verify():
-            await self.stop()  # "stop" set _fastapi_process to None
+        if not restart:
+            if not await self.verify():
+                await self.stop()  # "stop" set _fastapi_process to None
+        await asyncio.sleep(2)  # wait for uvicorn to start
         return self._fastapi_process
 
     async def stop(self):
