@@ -68,7 +68,7 @@ class HandlerService:
         """Get handler config attrs"""
         return getattr(self._handler_config, name)
 
-    async def prepare_handler_executables(self):
+    async def prepare_executables(self):
         """Clone or copy handler executables to handler dir"""
         if self.git_repo:  # FIXME: update git_utils
             if not await git_utils.ensure_repo(self):
@@ -95,7 +95,7 @@ class HandlerService:
                 logger.debug(f'{traceback.format_exc()}')
                 raise
 
-    async def start_handler(self):
+    async def start(self):
         if not self.port:
             raise ValueError(f'Handler {self.handler_id} port is not set!')
         if self._fastapi_process:
@@ -111,7 +111,25 @@ class HandlerService:
         )
         return self._fastapi_process
 
-    async def verify_handler(self) -> bool:
+    async def stop(self):
+        try:
+            if self.process.returncode is None:
+                self.process.terminate()
+                try:
+                    await asyncio.wait_for(self.process.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    self.process.kill()
+                    await self.process.wait()
+            logger.info(f'ℹ️ Stopped handler {self.handler_id} '
+                        f'on port {self.port}')
+            return self.port
+        except Exception as e:
+            logger.error(
+                f'‼️ Error stopping handler {self.handler_id}: {e}')
+            logger.debug(f'{traceback.format_exc()}')
+            return self.port
+
+    async def verify(self) -> bool:
         try:
             if not await self.healthcheck():
                 return False
