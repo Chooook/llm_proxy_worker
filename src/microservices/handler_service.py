@@ -95,11 +95,18 @@ class HandlerService:
                 logger.debug(f'{traceback.format_exc()}')
                 raise
 
-    async def start(self):
-        if not self.port:
-            raise ValueError(f'Handler {self.handler_id} port is not set!')
+    async def start(self, port: int = 0):
         if self._fastapi_process:
+            logger.info(f'ℹ️ Handler {self.handler_id} '
+                        f'already started on {self.port}')
             return self._fastapi_process
+
+        if port:
+            self.port = port
+        if not self.port:
+            raise ValueError(f'Handler {self.handler_id} not started: '
+                             f'port is not set!')
+
         self._fastapi_process = await asyncio.create_subprocess_exec(
             'uvicorn', 'handler_app:app',
             '--host', self.host,
@@ -122,11 +129,13 @@ class HandlerService:
                     await self.process.wait()
             logger.info(f'ℹ️ Stopped handler {self.handler_id} '
                         f'on port {self.port}')
+            self._fastapi_process = None
             return self.port
         except Exception as e:
             logger.error(
                 f'‼️ Error stopping handler {self.handler_id}: {e}')
             logger.debug(f'{traceback.format_exc()}')
+            self._fastapi_process = None
             return self.port
 
     async def verify(self) -> bool:
