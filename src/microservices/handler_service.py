@@ -73,6 +73,7 @@ class HandlerService:
                 logger.error(error_text)
                 raise RuntimeError(error_text)
 
+        self.last_active_time = time.time()
         process_endpoint = f'http://{self.host}:{self.port}/process'
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
@@ -204,7 +205,6 @@ class HandlerService:
             task_id='test_task')
         try:
             await self.process_task(test_task)
-            self.last_active_time = time.time()
             return True
         except Exception as e:
             logger.error(
