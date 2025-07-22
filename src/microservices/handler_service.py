@@ -67,6 +67,10 @@ class HandlerService:
         """Get handler config attrs"""
         return getattr(self._handler_config, name)
 
+    @property
+    def is_active(self):
+        return bool(self._fastapi_process)
+
     async def process_task(self, task: Task, timeout: int = 420):
         if self._fastapi_process is None:
             async with self._process_lock:
