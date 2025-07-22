@@ -56,6 +56,7 @@ class HandlerService:
         self.port: Optional[int] = None
         self._fastapi_process: Optional[asyncio.subprocess.Process] = None
         self.last_active_time: Optional[float] = None
+        self._process_lock = asyncio.Lock()
 
     def __dir__(self):
         """Add _handler_config fields to dir for IDE autocomplete"""
@@ -68,10 +69,13 @@ class HandlerService:
 
     async def process_task(self, task: Task, timeout: int = 420):
         if self._fastapi_process is None:
-            if not await self.start(restart=True):
-                error_text = f'‼️ Handler {self.handler_id} restart failure!'
-                logger.error(error_text)
-                raise RuntimeError(error_text)
+            async with self._process_lock:
+                if self._fastapi_process is None:  # double check for race
+                    if not await self.start(restart=True):
+                        error_text = (f'‼️ Handler {self.handler_id} '
+                                      f'restart failure!')
+                        logger.error(error_text)
+                        raise RuntimeError(error_text)
 
         self.last_active_time = time.time()
         process_endpoint = f'http://{self.host}:{self.port}/process'
@@ -139,10 +143,12 @@ class HandlerService:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
+
         if not restart:
             if not await self.verify():
                 await self.stop()  # "stop" set _fastapi_process to None
         await asyncio.sleep(2)  # wait for uvicorn to start
+
         return self._fastapi_process
 
     async def stop(self):
