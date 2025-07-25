@@ -45,7 +45,7 @@ async def health_check():
 
 class HandlerService:
     def __init__(self, handler_config: HandlerConfig):
-        self._handler_config = handler_config
+        self.config_obj = handler_config
         self._handler_dir = (
                 Path(os.getcwd())
                 / 'handlers'
@@ -61,11 +61,11 @@ class HandlerService:
     def __dir__(self):
         """Add _handler_config fields to dir for IDE autocomplete"""
         return (list(super().__dir__())
-                + list(self._handler_config.model_fields.keys()))
+                + list(self.config_obj.model_fields.keys()))
 
     def __getattr__(self, name: str) -> Any:
         """Get handler config attrs"""
-        return getattr(self._handler_config, name)
+        return getattr(self.config_obj, name)
 
     @property
     def is_active(self):
@@ -106,8 +106,10 @@ class HandlerService:
                 return False
         else:
             shutil.rmtree(self._handler_dir, ignore_errors=True)
-            self._handler_dir.mkdir(exist_ok=True, parents=True)
-            shutil.copytree(self.source_dir_name, self._handler_dir)
+            source_dir = (
+                Path(os.getcwd()) / 'handlers' / self.source_dir_name
+            ).resolve()
+            shutil.copytree(source_dir, self._handler_dir)
         return True
 
     def generate_fastapi_app(self):
@@ -147,11 +149,13 @@ class HandlerService:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
+        logger.info(f'ℹ️ Handler {self.handler_id} '
+                    f'started on {self.port}')
+        await asyncio.sleep(5)  # wait for uvicorn to start
 
         if not restart:
             if not await self.verify():
                 await self.stop()  # "stop" set _fastapi_process to None
-        await asyncio.sleep(2)  # wait for uvicorn to start
 
         return self._fastapi_process
 
@@ -179,34 +183,31 @@ class HandlerService:
 
     async def verify(self) -> bool:
         try:
-            if not await self._healthcheck():
-                return False
-            return await self._test_task_check()
+            await self._healthcheck()
+            await self._test_task_check()
+            return True
         except Exception as e:
             logger.error(
                 f'‼️ Handler verification failed '
                 f'for {self.handler_id}: {e}')
-            logger.debug(f'{traceback.format_exc()}')
-            return False
+            raise
 
-    async def _healthcheck(self, retries: int = 5) -> bool:
+    async def _healthcheck(self, retries: int = 5):
         try:
             url = f'http://{self.host}:{self.port}/health'
             async with httpx.AsyncClient(timeout=3) as client:
                 for _ in range(retries):
                     try:
                         response = await client.get(url)
-                        if response.status_code == 200:
-                            return True
+                        response.raise_for_status()
                     except (httpx.ConnectError, httpx.ReadTimeout):
-                        await asyncio.sleep(1)
-            return False
+                        raise
+                    await asyncio.sleep(1)
         except Exception as e:
             logger.error(
                 f'‼️ Health check failed for handler service '
                 f'{self.handler_id}: {e}')
-            logger.debug(f'{traceback.format_exc()}')
-            return False
+            raise
 
     async def _test_task_check(self) -> bool:
         test_task = Task(
@@ -220,5 +221,4 @@ class HandlerService:
             logger.error(
                 f'‼️ Test task verification failed '
                 f'for {self.handler_id}: {e}')
-            logger.debug(f'{traceback.format_exc()}')
-            return False
+            raise
