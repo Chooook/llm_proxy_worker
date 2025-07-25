@@ -33,7 +33,8 @@ def load_model() -> Llama:
     try:
         # FIXME remove hardcoded model path
         model = Llama(
-            model_path='../../../models/Nxcode-CQ-7B-orpo.fp16.gguf',
+            model_path='/home/chook/PycharmProjects/llm_proxy/'
+                       'worker/models/nxcode-cq-7b-orpo-q4_k_m.gguf',
             n_ctx=65536,
             n_thread=12,
             n_batch=512,
