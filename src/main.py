@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 import signal
 import sys
@@ -11,7 +10,6 @@ from redis.asyncio import Redis
 
 from handlers.handlers_manager import HandlerManager
 from schemas.answer import Answer
-from schemas.handler import HandlerConfig
 from schemas.task import Task, TaskStatus
 from settings import settings
 from worker import Worker
@@ -33,13 +31,7 @@ async def run_worker():
                 loop.add_signal_handler(sig, worker.shutdown_event.set)
 
         try:
-            worker.create_task(
-                worker.handler_manager.monitor_inactive_handlers())
-
-            await __store_handlers(worker)
-            worker.started = True
-            worker.create_task(heartbeat(worker))
-
+            await worker.init_handlers_manager()
             await __worker_loop(worker)
 
         except asyncio.CancelledError:
@@ -49,99 +41,21 @@ async def run_worker():
             raise
 
 
-async def __store_handlers(worker: Worker):
-    redis = worker.redis
-    """Store and verify handlers in Redis"""
-    to_remove = []
-    valid_handlers = {}
-
-    for h_config in settings.HANDLERS:
-        # Проверяем работоспособность обработчика
-        if await worker.handler_manager.verify_handler(h_config.handler_id):
-            valid_handlers[h_config.handler_id] = h_config
-        else:
-            logger.error('‼️ Handler validation failed for '
-                         f'{h_config.handler_id}')
-            to_remove.append(h_config)
-
-    # Удаляем нерабочие обработчики
-    for h_config in to_remove:
-        settings.HANDLERS.remove(h_config)
-
-    if not settings.HANDLERS:
-        error_msg = '‼️ No available task handlers!'
-        logger.error(error_msg)
-        raise RuntimeError(error_msg)
-
-    logger.info(
-        f'ℹ️ Available worker handlers:'
-        f' {[h.handler_id for h in settings.HANDLERS]}')
-
-    worker.handlers = json.dumps([h.handler_id for h in settings.HANDLERS])
-    worker.valid_handlers = valid_handlers
-
-    json_stored_handlers_configs = await __get_handlers_configs(redis)
-
-    await worker.setup_handlers()
-    async with redis.pipeline() as pipe:
-        await pipe.set('handlers_configs', json_stored_handlers_configs)
-        await pipe.lpush('workers', worker.id)
-        await pipe.execute()
-
-    logger.info(f'ℹ️ {worker.id} handlers successfully stored in Redis')
-
-
-async def __get_handlers_configs(redis: Redis):
-    raw_stored_h_configs = await redis.get('handlers_configs')
-
-    if raw_stored_h_configs:
-        stored_h_configs = {
-            h_id: HandlerConfig.model_validate(config)
-            for h_id, config in json.loads(raw_stored_h_configs).items()}
-
-        for h_config in settings.HANDLERS:
-            if h_config.handler_id not in stored_h_configs:
-                stored_h_configs.update({h_config.handler_id: h_config})
-    else:
-        stored_h_configs = {
-            config.handler_id: config for config in settings.HANDLERS}
-
-    return json.dumps(
-        {h_id: conf.model_dump()
-         for h_id, conf in stored_h_configs.items()})
-
-
-async def heartbeat(worker: Worker):
-    """Update worker alive status"""
-    while not worker.shutdown_event.is_set():
-        try:
-            await worker.setup_handlers()
-            await asyncio.sleep(30)
-            logger.debug('ℹ️ Heartbeat sent')
-        except Exception as e:
-            logger.warning(f'⚠️ Heartbeat failed: {e}')
-            break
-
-
 async def __worker_loop(worker: Worker):
     """Start main worker processing loop"""
-    # Семафор для ограничения количества одновременно выполняемых задач
+    # semaphore for limiting the number of concurrent tasks
     concurrency_semaphore = asyncio.Semaphore(settings.MAX_CONCURRENT_TASKS)
-
-    # Формируем очереди только для действительных обработчиков
-    handler_id_queues = [
-        f'task_queue:{handler_id}'
-        for handler_id in worker.valid_handlers.keys()
-    ]
 
     while not worker.shutdown_event.is_set():
         try:
-            result = await worker.redis.brpop(handler_id_queues, timeout=1)
-            if not result:
+            # use only available handlers queues
+            task = await worker.redis.brpop(
+                worker.supported_queues, timeout=1)
+            if not task:
                 continue
 
-            source_queue, task_id = result
-            # Извлекаем handler_id из имени очереди
+            source_queue, task_id = task
+            # get handler_id from queue name
             handler_id = source_queue.split(':', 1)[1]
 
             logger.info(
@@ -151,7 +65,7 @@ async def __worker_loop(worker: Worker):
                 await pipe.lpush('processing_queue', task_id)
                 await pipe.execute()
 
-            # Запускаем обработку задачи в отдельной асинхронной задаче
+            # start task processing in separate async coroutine
             worker.create_task(
                 __process_task_with_semaphore(
                     concurrency_semaphore,
@@ -197,19 +111,11 @@ async def __process_task(
         start_time = time.time()
 
         # Получаем URL обработчика (запускает при необходимости)
-        url = await handler_manager.get_handler_url(handler_id)
-        if not url:
+        meth = await handler_manager.get_handler_process_method(handler_id)
+        if not meth:
             raise Exception(f'Handler {handler_id} is not available')
 
-        # Отправляем запрос в FastAPI обработчик
-        # TODO сделать один общий клиент в Worker
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(url, json=task.model_dump())
-            if response.status_code != 200:
-                raise Exception(
-                    f'Handler error: {response.status_code} - {response.text}')
-
-            result_data = response.json()['result']
+        result_data = await meth(task)
 
         # Обрабатываем результат
         if isinstance(result_data, str):
