@@ -17,30 +17,30 @@ from settings import settings
 from utils import git_utils
 
 FASTAPI_HANDLER_TEMPLATE = Template('''
-    import traceback
-    from fastapi import FastAPI, HTTPException
+import traceback
+from fastapi import FastAPI, HTTPException
 
-    app = FastAPI()
+app = FastAPI()
 
-    @app.post('/process')
-    async def process_request(data: dict):
-        try:
-            from $module import $function
-            result = $function(data)
-            return {'result': result}
-        except Exception as e:
-            error_detail = {
-                'error': str(e),
-                'traceback': traceback.format_exc()
-            }
-            raise HTTPException(
-                status_code=500,
-                detail=error_detail
-            )
+@app.post('/process')
+async def process_request(data: dict):
+    try:
+        from $module import $function
+        result = $function(data)
+        return {'result': result}
+    except Exception as e:
+        error_detail = {
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }
+        raise HTTPException(
+            status_code=500,
+            detail=error_detail
+        )
 
-    @app.get('/health')
-    async def health_check():
-        return {'status': 'ok'}
+@app.get('/health')
+async def health_check():
+    return {'status': 'ok'}
 ''')
 
 class HandlerService:
