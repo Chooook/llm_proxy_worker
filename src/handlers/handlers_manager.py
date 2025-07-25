@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 import traceback
 from typing import Dict, Optional
@@ -6,13 +7,22 @@ from typing import Dict, Optional
 from loguru import logger
 
 from microservices.handler_service import HandlerService
-from settings import settings
+from settings import settings  # TODO: remove, use as class init params
 
 
 class HandlerManager:
     def __init__(self):
         self.handlers: Dict[str, HandlerService] = {}
         self.port_pool = set(range(*settings.HANDLER_PORT_RANGE))
+
+    @property
+    def handlers_configs(self):
+        return {service.config_obj.handler_id: service.config_obj
+                for service in self.handlers.values()}
+
+    @property
+    def handlers_json_str(self) -> str:
+        return json.dumps([handler_id for handler_id in self.handlers.keys()])
 
     async def get_handler_process_method(self, handler_id: str):
         return self.handlers.get(handler_id).process_task
@@ -34,7 +44,7 @@ class HandlerManager:
                 if not await handler_service.verify():
                     port = await handler_service.stop()
                     self.port_pool.add(port)
-                    raise RuntimeError('‼️ Handler verification failed')
+                    raise
 
                 self.handlers[handler_id] = handler_service
 
