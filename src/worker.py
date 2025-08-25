@@ -124,7 +124,7 @@ class Worker:
         try:
             await asyncio.wait_for(
                 asyncio.gather(*self.tasks, return_exceptions=True),
-                timeout=10.0
+                timeout=30.0
             )
         except asyncio.TimeoutError:
             logger.warning('⚠️ Some tasks did not finish gracefully')
