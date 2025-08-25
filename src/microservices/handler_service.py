@@ -8,6 +8,7 @@ from pathlib import Path
 from string import Template
 
 import httpx
+from async_lru import alru_cache
 from loguru import logger
 from typing_extensions import Any, Optional
 
@@ -131,7 +132,7 @@ class HandlerService:
     async def start(self, port: int = 0, restart: bool = False):
         if self._fastapi_process:
             logger.info(f'ℹ️ Handler {self.handler_id} '
-                        f'already started on {self.port}')
+                        f'already started on port {self.port}')
             return self._fastapi_process
 
         if port:
@@ -149,9 +150,9 @@ class HandlerService:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        logger.info(f'ℹ️ Handler {self.handler_id} '
-                    f'started on {self.port}')
         await asyncio.sleep(5)  # wait for uvicorn to start
+        logger.info(f'ℹ️ Handler {self.handler_id} '
+                    f'started on port {self.port}')
 
         if not restart:
             if not await self.verify():
@@ -181,10 +182,13 @@ class HandlerService:
             self._fastapi_process = None
             return self.port
 
+    @alru_cache(maxsize=1, ttl=300)
     async def verify(self) -> bool:
         try:
+            logger.info(f'ℹ️ Handler {self.handler_id} verification started')
             await self._healthcheck()
             await self._test_task_check()
+            logger.success(f'ℹ️ Handler {self.handler_id} verified')
             return True
         except Exception as e:
             logger.error(
