@@ -28,7 +28,9 @@ class HandlerManager:
         return self.handlers.get(handler_id).process_task
 
     async def start_handlers(self) -> Optional[int]:
-        for handler_config in settings.HANDLERS:
+        not_disabled_handlers = [
+            conf for conf in settings.HANDLERS if not conf.disabled]
+        for handler_config in not_disabled_handlers:
             handler_id = handler_config.handler_id
             handler_service = HandlerService(handler_config)
             try:

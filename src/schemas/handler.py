@@ -7,16 +7,19 @@ class HandlerConfig(BaseModel):
     version: str
     description: str = ''
 
+    source_dir_name: str = ''
+    # OR  # TODO add check local dir or git repo
+    git_repo: str = ''
+    git_branch: str = 'master'
+
     interface_func_module: str
     interface_func_name: str
 
-    db_loader_script_path: str = ''
+    knowledge_base_loader: str = ''
     service_launcher_script_path: str = ''
+    wait_for_service_launch_seconds: int = 0
 
-    source_dir_name: str = ''
-
-    git_repo: str = ''
-    git_branch: str = 'master'
+    disabled: bool = False
 
     @computed_field(return_type=str)
     @property
