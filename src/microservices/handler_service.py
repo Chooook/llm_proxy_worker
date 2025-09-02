@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
+import sys
 import time
 import traceback
 from pathlib import Path
@@ -185,6 +187,8 @@ class HandlerService:
             raise ValueError(f'Handler {self.handler_id} not started: '
                              f'port is not set!')
 
+        self._service_process = await self._start_handler_service()
+
         self._fastapi_process = await asyncio.create_subprocess_exec(
             'uvicorn', 'handler_app:app',
             '--host', self.host,
@@ -208,6 +212,43 @@ class HandlerService:
 
         return self._fastapi_process
 
+    async def _start_handler_service(self):
+        script_path = (f'{self._handler_dir}/'
+                       f'{self.config_obj.service_launcher_script_path}')
+        timeout = self.config_obj.wait_for_service_launch_seconds
+        if not script_path:
+            return None
+
+        logger.info(f'ℹ️ Starting handler service for {self.handler_id}...')
+        try:
+            if script_path.endswith('.py'):
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable, script_path,
+                    cwd=Path(script_path).parent,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            else:
+                process = await asyncio.create_subprocess_exec(
+                    'bash', '-c', f'source "{script_path}"',
+                    cwd=Path(script_path).parent,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+        except Exception as e:
+            logger.error(f'‼️ Error running handler service process: {e}')
+            raise
+        return_code = await process.wait()
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code,
+                                                script_path,
+                                                process.stdout,
+                                                process.stderr)
+        await asyncio.sleep(timeout)
+        logger.info(f'ℹ️ Handler service script executed for '
+                    f'{self.handler_id}')
+        return process
+
     async def stop(self):
         try:
             if (self._fastapi_process
@@ -222,6 +263,19 @@ class HandlerService:
                 logger.info(f'ℹ️ Stopped handler {self.handler_id} '
                             f'on port {self.port}')
                 self._fastapi_process = None
+
+            if (self._service_process
+                    and self._service_process.returncode is None):
+                self._service_process.terminate()
+                try:
+                    await asyncio.wait_for(
+                        self._service_process.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    self._service_process.kill()
+                    await self._service_process.wait()
+                logger.info(f'ℹ️ Stopped handler {self.handler_id} '
+                            f'service process on port {self.port}')
+                self._service_process = None
             return self.port
         except Exception as e:
             logger.error(
