@@ -190,6 +190,10 @@ class HandlerService:
             '--host', self.host,
             '--port', str(self.port),
             '--timeout-keep-alive', str(settings.HANDLER_INACTIVITY_TIMEOUT),
+            env={
+                **os.environ,
+                'KNOWLEDGE_BASE_DIR': str(self._knowledge_base_dir),
+            },
             cwd=str(self._handler_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
