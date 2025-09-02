@@ -59,6 +59,9 @@ class HandlerService:
         self.last_active_time: Optional[float] = None
         self._process_lock = asyncio.Lock()
 
+        self._knowledge_base_dir: Optional[Path] = None
+        self._service_process: Optional[asyncio.subprocess.Process] = None
+
     def __dir__(self):
         """Add _handler_config fields to dir for IDE autocomplete"""
         return (list(super().__dir__())
