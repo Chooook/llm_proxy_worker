@@ -35,6 +35,7 @@ class HandlerManager:
             handler_service = HandlerService(handler_config)
             try:
                 await handler_service.prepare_executables()
+                await handler_service.load_knowledge_base()
                 handler_service.generate_fastapi_app()
 
                 if not self.port_pool:

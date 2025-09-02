@@ -116,6 +116,47 @@ class HandlerService:
             shutil.copytree(source_dir, self._handler_dir)
         return True
 
+    async def load_knowledge_base(self):
+        script_path = (f'{self._handler_dir}/'
+                       f'{self.config_obj.knowledge_base_loader}')
+        logger.info(script_path)
+        if not script_path:
+            self._knowledge_base_dir = None
+
+        knowledge_base_dir = (
+            Path(os.getcwd())
+            / 'knowledge_bases'
+            / self.config_obj.task_type
+        )
+
+        logger.info(f'ℹ️ Loading knowledge base for {self.handler_id}...')
+        try:
+            if script_path.endswith('.py'):
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable, script_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=Path(script_path).parent
+                )
+            else:
+                process = await asyncio.create_subprocess_exec(
+                    'bash', '-c', f'source "{script_path}"',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=Path(script_path).parent
+                )
+            return_code = await process.wait()
+            if return_code != 0:
+                raise subprocess.CalledProcessError(return_code,
+                                                    script_path,
+                                                    process.stdout,
+                                                    process.stderr)
+        except Exception as e:
+            logger.error(f'‼️ Error running knowledge_base_loader script: {e}')
+            raise
+        logger.info(f'ℹ️ Loaded knowledge base for {self.handler_id}')
+        self._knowledge_base_dir = knowledge_base_dir
+
     def generate_fastapi_app(self):
             """Generate FastAPI app file"""
             app_file_path = self._handler_dir / 'handler_app.py'
