@@ -108,9 +108,12 @@ class HandlerService:
 
     async def prepare_executables(self):
         """Clone or copy handler executables to handler dir"""
-        if self.git_repo:  # FIXME: update git_utils
-            if not await git_utils.ensure_repo(self):
-                return False
+        if self.git_repo:
+            await git_utils.ensure_repo(
+                self.git_repo,
+                self.git_branch,
+                self._handler_dir
+            )
         else:
             shutil.rmtree(self._handler_dir, ignore_errors=True)
             source_dir = (

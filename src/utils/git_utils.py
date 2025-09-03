@@ -1,90 +1,82 @@
 import asyncio
 import os
-import subprocess
 from pathlib import Path
 
 from loguru import logger
-
-from schemas.handler import HandlerConfig
 
 # TODO: add credentials request to init script
 GIT_LOGIN = os.getenv('GIT_LOGIN', '')
 GIT_PASS = os.getenv('GIT_PASS', '')
 
 
-async def ensure_repo(
-        handler_dir: Path, handler_config: HandlerConfig):
-    try:
-        if handler_dir.exists():
-            await update_repo(handler_dir, handler_config)
-        else:
-            await clone_repo(handler_dir, handler_config)
-    except Exception:
-        logger.error(
-            f'‼️ Repository operation failed '
-            f'for {handler_config.handler_id}'
-        )
-        raise
+async def ensure_repo(repo: str, branch: str, target_dir: Path):
+    if target_dir.exists():
+        await update_repo(repo, branch, target_dir)
+    else:
+        await clone_repo(repo, branch, target_dir)
 
-async def clone_repo(target_dir: Path, handler_config: HandlerConfig):
+async def clone_repo(repo: str, branch: str, target_dir: Path):
+    logger.info(f'⬇️ Cloning {repo}, branch: {branch} to {target_dir}...')
     command = [
         'git', 'clone',
         '--depth', '1',
-        '--branch', handler_config.git_branch,
-        handler_config.git_repo, str(target_dir)
+        '--branch', branch,
+        repo, str(target_dir)
     ]
     process = await asyncio.create_subprocess_exec(
         *command,
         stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
+        stdout=None,
         stderr=asyncio.subprocess.PIPE,
     )
-    await asyncio.sleep(1)  # wait for login query
-    await process.communicate(input=f'{GIT_LOGIN}\n'.encode())
-    await process.communicate(input=f'{GIT_PASS}\n'.encode())
+    await asyncio.sleep(1)  # wait for auth query
+    _, stderr = await process.communicate(
+        input=f'{GIT_LOGIN}\n{GIT_PASS}\n'.encode())
 
     if process.returncode == 0:
-        logger.success(f'✅️ Git clone success for {handler_config.handler_id}')
+        logger.success(f'✅️ Git clone success from {repo}')
     else:
-        logger.error(f'‼️ Git clone failed for {handler_config.handler_id}')
-        error = await process.stderr.read()
-        raise RuntimeError(f'{error.decode()}')
+        logger.error(f'‼️ Git clone failed from {repo}')
+        error = stderr.decode()
+        raise RuntimeError(f'{error}')
 
 
-async def update_repo(repo_dir: Path, handler_config: HandlerConfig):
-    reset_command = [
-        'cd', str(repo_dir), '&&',
-        'git', 'reset', '--hard', 'HEAD'
+async def update_repo(repo: str, branch: str, target_dir: Path):
+    logger.info(f'⬇️ Updating {repo}, branch: {branch} in {target_dir}...')
+    init_commands = [
+        ['git', 'reset', '--hard', 'HEAD'],
+        ['git', 'checkout', branch]
     ]
-    reset_process = await asyncio.create_subprocess_exec(
-        *reset_command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
-    )
-    if reset_process.returncode == 0:
-        logger.success(f'✅️ Git reset success for {handler_config.handler_id}')
-    else:
-        logger.error(f'‼️ Git reset failed for {handler_config.handler_id}')
-        error = await reset_process.stderr.read()
-        raise RuntimeError(f'{error.decode()}')
 
-    pull_command = [
-        'cd', str(repo_dir), '&&',
-        'git', 'pull', 'origin', handler_config.git_branch
-    ]
-    pull_process = await asyncio.create_subprocess_exec(
+    for cmd in init_commands:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=target_dir,
+            stdout=None,
+            stderr=asyncio.subprocess.PIPE
+        )
+        _, stderr = await process.communicate()
+        if process.returncode != 0:
+            logger.error(f'‼️ Git update cmd failed: {cmd}')
+            error = stderr.decode()
+            raise RuntimeError(f'{error}')
+
+    pull_command = ['git', 'pull', 'origin', branch]
+    update_process = await asyncio.create_subprocess_exec(
         *pull_command,
+        cwd=target_dir,
         stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        stdout=None,
+        stderr=asyncio.subprocess.PIPE
     )
-    await asyncio.sleep(1)  # wait for login query
-    await pull_process.communicate(input=f'{GIT_LOGIN}\n'.encode())
-    await pull_process.communicate(input=f'{GIT_PASS}\n'.encode())
+    await asyncio.sleep(1)  # wait for auth query
+    _, stderr = await update_process.communicate(
+        input=f'{GIT_LOGIN}\n{GIT_PASS}\n'.encode())
 
-    if pull_process.returncode == 0:
-        logger.success(f'✅️ Git pull success for {handler_config.handler_id}')
+    if update_process.returncode == 0:
+        logger.success(f'✅️ Git repo update success from {repo}')
     else:
-        logger.error(f'‼️ Git pull failed for {handler_config.handler_id}')
-        error = await pull_process.stderr.read()
-        raise RuntimeError(f'{error.decode()}')
+        logger.error(f'‼️ Git repo update failed from {repo}, '
+                     f'command: {pull_command}')
+        error = stderr.decode()
+        raise RuntimeError(f'{error}')
