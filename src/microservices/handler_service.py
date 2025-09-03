@@ -46,6 +46,7 @@ async def health_check():
     return {'status': 'ok'}
 ''')
 
+
 class HandlerService:
     def __init__(self, handler_config: HandlerConfig):
         self.config_obj = handler_config
@@ -119,11 +120,12 @@ class HandlerService:
         return True
 
     async def load_knowledge_base(self):
-        script_path = (f'{self._handler_dir}/'
-                       f'{self.config_obj.knowledge_base_loader}')
-        logger.info(script_path)
-        if not script_path:
+        knowledge_base_loader = self.config_obj.knowledge_base_loader
+        if not knowledge_base_loader:
             self._knowledge_base_dir = None
+            return
+        script_path = f'{self._handler_dir}/{knowledge_base_loader}'
+        logger.info(script_path)
 
         knowledge_base_dir = (
             Path(os.getcwd())
@@ -213,11 +215,12 @@ class HandlerService:
         return self._fastapi_process
 
     async def _start_handler_service(self):
-        script_path = (f'{self._handler_dir}/'
-                       f'{self.config_obj.service_launcher_script_path}')
-        timeout = self.config_obj.wait_for_service_launch_seconds
-        if not script_path:
+        launcher = self.config_obj.service_launcher_script_path
+        if not launcher:
             return None
+        script_path = (f'{self._handler_dir}/'
+                       f'{launcher}')
+        timeout = self.config_obj.wait_for_service_launch_seconds
 
         logger.info(f'ℹ️ Starting handler service for {self.handler_id}...')
         try:
