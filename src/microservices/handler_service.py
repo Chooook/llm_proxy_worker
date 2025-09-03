@@ -120,10 +120,9 @@ class HandlerService:
                 Path(os.getcwd()) / 'handlers' / self.source_dir_name
             ).resolve()
             shutil.copytree(source_dir, self._handler_dir)
-        return True
 
     async def load_knowledge_base(self):
-        knowledge_base_loader = self.config_obj.knowledge_base_loader
+        knowledge_base_loader = self.knowledge_base_loader
         if not knowledge_base_loader:
             self._knowledge_base_dir = None
             return
@@ -133,7 +132,7 @@ class HandlerService:
         knowledge_base_dir = (
             Path(os.getcwd())
             / 'knowledge_bases'
-            / self.config_obj.task_type
+            / self.task_type
         )
 
         logger.info(f'ℹ️ Loading knowledge base for {self.handler_id}...')
@@ -218,12 +217,12 @@ class HandlerService:
         return self._fastapi_process
 
     async def _start_handler_service(self):
-        launcher = self.config_obj.service_launcher_script_path
+        launcher = self.service_launcher_script_path
         if not launcher:
             return None
         script_path = (f'{self._handler_dir}/'
                        f'{launcher}')
-        timeout = self.config_obj.wait_for_service_launch_seconds
+        timeout = self.wait_for_service_launch_seconds
 
         logger.info(f'ℹ️ Starting handler service for {self.handler_id}...')
         try:
