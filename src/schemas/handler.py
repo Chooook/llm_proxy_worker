@@ -25,3 +25,24 @@ class HandlerConfig(BaseModel):
     @property
     def handler_id(self):
         return f'{self.task_type}:{self.version}'
+
+    @property
+    def metadata(self):
+        return HandlerMetadata(
+            name=self.name,
+            task_type=self.task_type,
+            version=self.version,
+            description=self.description,
+        )
+
+
+class HandlerMetadata(BaseModel):
+    name: str
+    task_type: str
+    version: str
+    description: str
+
+    @computed_field(return_type=str)
+    @property
+    def handler_id(self):
+        return f'{self.task_type}:{self.version}'

@@ -16,9 +16,9 @@ class HandlerManager:
         self.port_pool = set(range(*settings.HANDLER_PORT_RANGE))
 
     @property
-    def handlers_configs(self):
-        return {service.config_obj.handler_id: service.config_obj
-                for service in self.handlers.values()}
+    def handlers_metadata(self):
+        return {handler.handler_id: handler.metadata
+                for handler in self.handlers.values()}
 
     @property
     def handlers_json_str(self) -> str:

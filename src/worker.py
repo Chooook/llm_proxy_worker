@@ -7,7 +7,7 @@ from redis.asyncio import Redis
 from typing_extensions import Iterable
 
 from handlers.handlers_manager import HandlerManager
-from schemas.handler import HandlerConfig
+from schemas.handler import HandlerMetadata
 from settings import settings
 
 
@@ -39,8 +39,8 @@ class Worker:
         return self.handler_manager.handlers_json_str
 
     @property
-    def __handlers_configs(self):
-        return self.handler_manager.handlers_configs.items()
+    def __handlers_metadata(self):
+        return self.handler_manager.handlers_metadata.items()
 
     @property
     def supported_queues(self) -> Iterable[str]:
@@ -68,33 +68,33 @@ class Worker:
 
     async def __store_worker_to_redis(self):
 
-        handlers_configs = await self.__build_configs_json()
+        handlers_metadata = await self.__build_handlers_metadata_json()
 
         await self.__send_heartbeat()
         async with self.redis.pipeline() as pipe:
-            await pipe.set('handlers_configs', handlers_configs)
+            await pipe.set('handlers_metadata', handlers_metadata)
             await pipe.setex(self.id, 60, self.__handlers_str)
             await pipe.lpush('workers', self.id)
             await pipe.execute()
 
         logger.info(f'ℹ️ {self.id} handlers successfully stored in Redis')
 
-    async def __build_configs_json(self):
-        raw_stored_h_configs = await self.redis.get('handlers_configs')
-        if raw_stored_h_configs:
-            actual_configs = {
-                h_id: HandlerConfig.model_validate(config)
-                for h_id, config in json.loads(raw_stored_h_configs).items()}
+    async def __build_handlers_metadata_json(self):
+        raw_stored_h_data = await self.redis.get('handlers_metadata')
+        if raw_stored_h_data:
+            actual_h_metadata = {
+                h_id: HandlerMetadata.model_validate(metadata)
+                for h_id, metadata in json.loads(raw_stored_h_data).items()}
 
-            for h_id, h_config in self.__handlers_configs:
-                actual_configs[h_id] = h_config
+            for h_id, metadata in self.__handlers_metadata:
+                actual_h_metadata[h_id] = metadata
         else:
-            actual_configs = {h_id: config for h_id, config
-                              in self.__handlers_configs}
+            actual_h_metadata = {h_id: metadata for h_id, metadata
+                                 in self.__handlers_metadata}
 
         return json.dumps(
-            {h_id: config.model_dump()
-             for h_id, config in actual_configs.items()})
+            {h_id: metadata.model_dump()
+             for h_id, metadata in actual_h_metadata.items()})
 
     async def __heartbeat_task(self):
         """Update worker alive status"""
