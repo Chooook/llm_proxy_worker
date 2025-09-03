@@ -26,7 +26,11 @@ class Worker:
         )
         self.tasks = set()
         self.shutdown_event = asyncio.Event()
-        self.handler_manager = HandlerManager()
+        self.handler_manager = HandlerManager(
+            handlers_configs=settings.HANDLERS,
+            port_pool=settings.HANDLER_PORT_RANGE,
+            handler_inactivity_timeout=settings.HANDLER_INACTIVITY_TIMEOUT
+        )
 
     async def __aenter__(self):
         return self

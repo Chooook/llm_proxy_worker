@@ -7,13 +7,19 @@ from typing import Dict, Optional
 from loguru import logger
 
 from microservices.handler_service import HandlerService
-from settings import settings  # TODO: remove, use as class init params
+from schemas.handler import HandlerConfig
 
 
 class HandlerManager:
-    def __init__(self):
+    def __init__(self,
+                 handlers_configs: list[HandlerConfig],
+                 port_pool: tuple[int, int],
+                 handler_inactivity_timeout: int):
+
+        self._handler_inactivity_timeout = handler_inactivity_timeout
+        self._handlers_configs = handlers_configs
         self.handlers: Dict[str, HandlerService] = {}
-        self.port_pool = set(range(*settings.HANDLER_PORT_RANGE))
+        self.port_pool = set(range(*port_pool))
 
     @property
     def handlers_metadata(self):
@@ -29,7 +35,7 @@ class HandlerManager:
 
     async def start_handlers(self) -> Optional[int]:
         not_disabled_handlers = [
-            conf for conf in settings.HANDLERS if not conf.disabled]
+            conf for conf in self._handlers_configs if not conf.disabled]
         for handler_config in not_disabled_handlers:
             handler_id = handler_config.handler_id
             handler_service = HandlerService(handler_config)
@@ -84,7 +90,7 @@ class HandlerManager:
             for handler_service in self.handlers.values():
                 if handler_service.is_active:
                     time_diff = current_time - handler_service.last_active_time
-                    if time_diff > settings.HANDLER_INACTIVITY_TIMEOUT:
+                    if time_diff > self._handler_inactivity_timeout:
                         to_stop.append(handler_service)
 
             for handler_service in to_stop:
