@@ -108,6 +108,11 @@ class HandlerService:
 
     async def prepare_executables(self):
         """Clone or copy handler executables to handler dir"""
+        if self.git_repo and self.source_dir_name:
+            raise ValueError(
+                f'‼️ Both git_repo and source_dir_name are set for handler '
+                f'{self.handler_id}. '
+                'Please specify only one of them!')
         if self.git_repo:
             await git_utils.ensure_repo(
                 self.git_repo,

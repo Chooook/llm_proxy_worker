@@ -8,7 +8,7 @@ class HandlerConfig(BaseModel):
     description: str = ''
 
     source_dir_name: str = ''
-    # OR  # TODO add check local dir or git repo
+    # OR
     git_repo: str = ''
     git_branch: str = 'master'
 
