@@ -18,11 +18,9 @@ logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
 
 async def run_worker():
-    git_login = os.getenv('GIT_LOGIN')
-    git_pass = os.getenv('GIT_PASS')
-    if not any([git_login, git_pass]):
-        logger.warning(
-            '⚠️ Git credentials not set in env, repository access may fail')
+    if not os.getenv('GIT_TOKEN'):
+        logger.info(
+            '⚠️ Git token not set in env, repository access may fail')
 
     async with Worker() as worker:
         if sys.platform != 'win32':
