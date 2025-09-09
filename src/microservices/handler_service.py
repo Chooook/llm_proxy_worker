@@ -206,6 +206,8 @@ class HandlerService:
             env={
                 **os.environ,
                 'KNOWLEDGE_BASE_DIR': str(self._knowledge_base_dir),
+                **settings.local_models_paths
+                # TODO: add gc api link here when it will be ready
             },
             cwd=str(self._handler_dir),
             stdout=asyncio.subprocess.PIPE,

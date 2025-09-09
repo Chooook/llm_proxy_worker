@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     @cached_property
     def local_models_paths(self):
-        return {m.name: m.path for m in self.local_models}
+        return {m.name: m.path for m in self.local_models if m.path}
 
     @classmethod
     def settings_customise_sources(
