@@ -1,3 +1,4 @@
+import os
 from functools import cached_property
 from pathlib import Path
 from typing_extensions import Tuple, Type
@@ -7,6 +8,7 @@ from pydantic_settings import (
     SettingsConfigDict, YamlConfigSettingsSource)
 
 from schemas.handler import HandlerConfig
+from schemas.local_model import LocalModel
 
 
 class Settings(BaseSettings):
@@ -27,9 +29,20 @@ class Settings(BaseSettings):
     HANDLER_INACTIVITY_TIMEOUT: int
     MAX_CONCURRENT_TASKS: int = 10
 
+    local_models: list[LocalModel] = []
+    LOCAL_MODELS_PATH: Path = Path('./models').absolute()
+    FORCE_MODEL_DOWNLOAD: bool = False
+
+    MIRROR_TOKEN: str = os.getenv('MIRROR_TOKEN', '').strip()
+    GIT_TOKEN: str = os.getenv('GIT_TOKEN', '').strip()
+
     @cached_property
     def redis_store_seconds(self):
         return self.REDIS_EXPIRE_DAYS * 24 * 60 * 60
+
+    @cached_property
+    def local_models_paths(self):
+        return {m.name: m.path for m in self.local_models}
 
     @classmethod
     def settings_customise_sources(

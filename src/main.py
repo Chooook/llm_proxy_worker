@@ -1,10 +1,8 @@
 import asyncio
-import os
 import signal
 import sys
 import time
 
-import httpx
 from loguru import logger
 from redis.asyncio import Redis
 
@@ -12,13 +10,16 @@ from handlers.handlers_manager import HandlerManager
 from schemas.answer import Answer
 from schemas.task import Task, TaskStatus
 from settings import settings
+from utils.model_loader import download_models
 from worker import Worker
 
 logger.add('worker.log', level=settings.LOGLEVEL, rotation='10 MB')
 
 
 async def run_worker():
-    if not os.getenv('GIT_TOKEN'):
+    await download_models()
+
+    if not settings.GIT_TOKEN:
         logger.info(
             '⚠️ Git token not set in env, repository access may fail')
 
