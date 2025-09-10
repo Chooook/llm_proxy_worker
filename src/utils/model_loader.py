@@ -1,5 +1,5 @@
 import asyncio
-import hashlib
+import xxhash
 import json
 import os
 import tarfile
@@ -77,11 +77,12 @@ async def _download_single_model(
         # check if model already downloaded
         if (not settings.FORCE_MODEL_DOWNLOAD
                 and model_dir.exists()
-                and model_dir.is_dir()):
+                and model_dir.is_dir()
+                and model.name in hash_history):
+
             current_hash = await _calculate_dir_hash(model_dir)
 
-            if (model.name in hash_history
-                    and hash_history[model.name] == current_hash):
+            if hash_history[model.name] == current_hash:
                 logger.info(
                     f'ℹ️ Model {model.name} already downloaded and up to date')
                 return LocalModel(
@@ -128,19 +129,19 @@ async def _download_single_model(
         return model
 
 
-async def _calculate_dir_hash(directory: Path,
-                              algorithm: str = 'sha256') -> str:
-    hash_func = getattr(hashlib, algorithm)()
+async def _calculate_dir_hash(directory: Path) -> str:
+
+    hash_func = xxhash.xxh64()
 
     for root, dirs, files in os.walk(directory):
         for file in sorted(files):
             file_path = Path(root) / file
             rel_path = file_path.relative_to(directory)
-            hash_func.update(str(rel_path).encode())
 
-            async with aiofiles.open(file_path, 'rb') as f:
-                while chunk := await f.read(8192):
-                    hash_func.update(chunk)
+            stat = file_path.stat()
+            hash_func.update(str(rel_path).encode())
+            hash_func.update(str(stat.st_size).encode())
+            hash_func.update(str(stat.st_mtime).encode())
 
     return hash_func.hexdigest()
 
