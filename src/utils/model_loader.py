@@ -72,6 +72,7 @@ async def _download_single_model(
 
     try:
         model_dir = base_dir / model.name
+        model_dir.mkdir(parents=True, exist_ok=True)
 
         # check if model already downloaded
         if (not settings.FORCE_MODEL_DOWNLOAD
@@ -158,8 +159,8 @@ async def _download_file_with_wget(url: str, destination: Path,
             if 'huggingface.co' in url:
                 cmd.extend(['--header', f'Authorization: Bearer {token}'])
             else:
-                url = url.replace('http://', f'http://{token}@')
-                url = url.replace('https://', f'https://{token}@')
+                url = url.replace('http://', f'http://token:{token}@')
+                url = url.replace('https://', f'https://token:{token}@')
 
         cmd.append(url)
 
@@ -190,8 +191,6 @@ async def _download_file_with_wget(url: str, destination: Path,
 async def _extract_archive(archive_path: Path, extract_dir: Path):
 
     def sync_extract():
-        extract_dir.mkdir(parents=True, exist_ok=True)
-
         if archive_path.suffix == '.zip':
             with zipfile.ZipFile(archive_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
