@@ -20,8 +20,7 @@ async def run_worker():
     await download_models()
 
     if not settings.GIT_TOKEN:
-        logger.info(
-            '⚠️ Git token not set in env, repository access may fail')
+        logger.info('⚠️ Git token not set in env, repository access may fail')
 
     async with Worker() as worker:
         if sys.platform != 'win32':
