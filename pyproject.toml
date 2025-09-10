@@ -13,4 +13,5 @@ dependencies = [
     "loguru>=0.7.3",
     "pydantic>=2.11.4",
     "redis==5.2.1",
+    "xxhash==3.5.0",
 ]
