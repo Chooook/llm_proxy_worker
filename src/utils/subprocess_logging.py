@@ -65,7 +65,7 @@ async def run_managed_process(
         error_callback: Optional[Callable[[Exception], Any]] = None
 ) -> ManagedProcess:
 
-    logger.info(f'ℹ️ Starting managed process: {process_name}')
+    logger.debug(f'ℹ️ Starting managed process: {process_name}')
 
     process = await asyncio.create_subprocess_exec(
         *command,
@@ -86,10 +86,7 @@ async def run_managed_process(
                 if not output:
                     continue
 
-                if is_stderr:
-                    logger.error(f'‼️ {process_name}: {output}')
-                else:
-                    logger.info(f'ℹ️ {process_name}: {output}')
+                logger.debug(f'{process_name}: {output}')
 
             except asyncio.CancelledError:
                 break
@@ -112,7 +109,7 @@ async def run_managed_process(
             await asyncio.gather(*logging_tasks, return_exceptions=True)
 
             if return_code == 0:
-                logger.info(f'ℹ️ {process_name}: Completed successfully')
+                logger.success(f'✅️ {process_name}: Completed successfully')
                 if success_callback:
                     success_callback()
             else:
