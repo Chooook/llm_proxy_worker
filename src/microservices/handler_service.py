@@ -18,6 +18,7 @@ from schemas.handler import HandlerConfig
 from schemas.task import Task
 from settings import settings
 from utils import git_utils
+from utils.subprocess_logging import ManagedProcess, run_managed_process
 
 FASTAPI_HANDLER_TEMPLATE = Template('''
 import traceback
@@ -49,7 +50,7 @@ async def health_check():
 
 class HandlerService:
     def __init__(self, handler_config: HandlerConfig):
-        self.config_obj = handler_config
+        self._config_obj = handler_config
         self._handler_dir = (
                 Path(os.getcwd())
                 / 'handlers'
@@ -58,25 +59,25 @@ class HandlerService:
         # `:` is not allowed symbol for dir names in Windows
         self.host = '127.0.0.1'
         self.port: Optional[int] = None
-        self._fastapi_process: Optional[asyncio.subprocess.Process] = None
+        self._fastapi_process: Optional[ManagedProcess] = None
         self.last_active_time: Optional[float] = None
         self._process_lock = asyncio.Lock()
 
         self._knowledge_base_dir: Optional[Path] = None
-        self._service_process: Optional[asyncio.subprocess.Process] = None
+        self._service_process: Optional[ManagedProcess] = None
 
     def __dir__(self):
         """Add _handler_config fields to dir for IDE autocomplete"""
         return (list(super().__dir__())
-                + list(self.config_obj.model_fields.keys()))
+                + list(self._config_obj.model_fields.keys()))
 
     def __getattr__(self, name: str) -> Any:
         """Get handler config attrs"""
-        return getattr(self.config_obj, name)
+        return getattr(self._config_obj, name)
 
     @property
     def is_active(self):
-        return bool(self._fastapi_process)
+        return bool(self._fastapi_process and self._fastapi_process.is_running)
 
     async def process_task(self, task: Task, timeout: int = 420):
         if self._fastapi_process is None:
@@ -131,8 +132,8 @@ class HandlerService:
         if not knowledge_base_loader:
             self._knowledge_base_dir = None
             return
+
         script_path = f'{self._handler_dir}/{knowledge_base_loader}'
-        logger.info(script_path)
 
         knowledge_base_dir = (
             Path(os.getcwd())
@@ -141,31 +142,32 @@ class HandlerService:
         )
 
         logger.info(f'ℹ️ Loading knowledge base for {self.handler_id}...')
-        try:
-            if script_path.endswith('.py'):
-                process = await asyncio.create_subprocess_exec(
-                    sys.executable, script_path,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=Path(script_path).parent
-                )
-            else:
-                process = await asyncio.create_subprocess_exec(
-                    'bash', '-c', f'source "{script_path}"',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=Path(script_path).parent
-                )
-            return_code = await process.wait()
-            if return_code != 0:
-                raise subprocess.CalledProcessError(return_code,
-                                                    script_path,
-                                                    process.stdout,
-                                                    process.stderr)
-        except Exception as e:
-            logger.error(f'‼️ Error running knowledge_base_loader script: {e}')
-            raise
-        logger.info(f'ℹ️ Loaded knowledge base for {self.handler_id}')
+
+        if script_path.endswith('.py'):
+            command = [sys.executable, script_path]
+        elif script_path.endswith('.sh'):
+            command = ['bash', '-c', f'source "{script_path}"']
+        else:
+            raise ValueError(f'‼️ Knowledge base loader have to be '
+                             f'python or shell script, got {script_path}')
+
+        process_name = f'KB-LOADER-{self.handler_id}'
+
+        process = await run_managed_process(
+            command=command,
+            process_name=process_name,
+            cwd=Path(script_path).parent,
+            success_callback=lambda: logger.info(
+                f'✅️ Knowledge base loaded for {self.handler_id}'),
+            error_callback=lambda err: logger.error(
+                f'‼️ Knowledge base loading '
+                f'failed for {self.handler_id}: {err}')
+        )
+
+        return_code = await process.wait()
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, script_path)
+
         self._knowledge_base_dir = knowledge_base_dir
 
     def generate_fastapi_app(self):
@@ -185,10 +187,10 @@ class HandlerService:
                 raise
 
     async def start(self, port: int = 0, restart: bool = False):
-        if self._fastapi_process:
+        if self._fastapi_process and self._fastapi_process.is_running:
             logger.info(f'ℹ️ Handler {self.handler_id} '
                         f'already started on port {self.port}')
-            return self._fastapi_process
+            return True
 
         if port:
             self.port = port
@@ -198,101 +200,93 @@ class HandlerService:
 
         self._service_process = await self._start_handler_service()
 
-        self._fastapi_process = await asyncio.create_subprocess_exec(
-            'uvicorn', 'handler_app:app',
-            '--host', self.host,
-            '--port', str(self.port),
-            '--timeout-keep-alive', str(settings.HANDLER_INACTIVITY_TIMEOUT),
-            env={
-                **os.environ,
-                'KNOWLEDGE_BASE_DIR': str(self._knowledge_base_dir),
-                **settings.local_models_paths
-            },
+        process_name = f'HANDLER-{self.handler_id}'
+
+        env_vars = {
+            **os.environ,
+            'KNOWLEDGE_BASE_DIR': str(self._knowledge_base_dir),
+            **settings.local_models_paths
+        }
+
+        self._fastapi_process = await run_managed_process(
+            command=[
+                'uvicorn', 'handler_app:app',
+                '--host', self.host,
+                '--port', str(self.port),
+                '--timeout-keep-alive', str(1020)
+            ],
+            process_name=process_name,
             cwd=str(self._handler_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            env=env_vars,
+            success_callback=lambda: logger.info(
+                f'ℹ️ FastAPI started for {self.handler_id}'),
+            error_callback=lambda e: logger.error(
+                f'‼️ FastAPI failed for {self.handler_id}: {e}')
         )
-        await asyncio.sleep(5)  # wait for uvicorn to start
-        logger.info(f'ℹ️ Handler {self.handler_id} '
-                    f'started on port {self.port}')
+
+        await asyncio.sleep(1)  # wait for uvicorn to start
+        logger.info(
+            f'ℹ️ Handler {self.handler_id} started on port {self.port}')
 
         if not restart:
-            if not await self.verify():
-                await self.stop()  # "stop" set _fastapi_process to None
+            return await self.verify()
+        return True
 
-        return self._fastapi_process
-
-    async def _start_handler_service(self):
+    async def _start_handler_service(self) -> Optional[ManagedProcess]:
         launcher = self.service_launcher_script_path
         if not launcher:
             return None
-        script_path = (f'{self._handler_dir}/'
-                       f'{launcher}')
-        timeout = self.wait_for_service_launch_seconds
 
-        logger.info(f'ℹ️ Starting handler service for {self.handler_id}...')
+        script_path = f'{self._handler_dir}/{launcher}'
+
+        logger.info(f'ℹ️ Starting handler subservice for {self.handler_id}...')
+
         try:
             if script_path.endswith('.py'):
-                process = await asyncio.create_subprocess_exec(
-                    sys.executable, script_path,
-                    cwd=Path(script_path).parent,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
+                command = [sys.executable, script_path]
             else:
-                process = await asyncio.create_subprocess_exec(
-                    'bash', '-c', f'source "{script_path}"',
-                    cwd=Path(script_path).parent,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
+                command = ['bash', '-c', f'source "{script_path}"']
+
+            process_name = f'SUBSERVICE-{self.handler_id}'
+
+            process =  await run_managed_process(
+                command=command,
+                process_name=process_name,
+                cwd=Path(script_path).parent,
+                success_callback=lambda: logger.info(
+                    f'ℹ️ Subservice started for {self.handler_id}'),
+                error_callback=lambda err: logger.error(
+                    f'‼️ Subservice of {self.handler_id} failed: {err}')
+            )
+            await asyncio.sleep(self.wait_for_service_launch_seconds)
+
+            return process
+
         except Exception as e:
-            logger.error(f'‼️ Error running handler service process: {e}')
+            logger.error(f'‼️ Error running handler subservice process: {e}')
             raise
-        return_code = await process.wait()
-        if return_code != 0:
-            raise subprocess.CalledProcessError(return_code,
-                                                script_path,
-                                                process.stdout,
-                                                process.stderr)
-        await asyncio.sleep(timeout)
-        logger.info(f'ℹ️ Handler service script executed for '
-                    f'{self.handler_id}')
-        return process
 
     async def stop(self):
         try:
-            if (self._fastapi_process
-                    and self._fastapi_process.returncode is None):
-                self._fastapi_process.terminate()
-                try:
-                    await asyncio.wait_for(
-                        self._fastapi_process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    self._fastapi_process.kill()
-                    await self._fastapi_process.wait()
-                logger.info(f'ℹ️ Stopped handler {self.handler_id} '
-                            f'on port {self.port}')
+            if self._fastapi_process and self._fastapi_process.is_running:
+                await self._fastapi_process.stop()
+                logger.info(
+                    f'ℹ️ Stopped handler {self.handler_id} '
+                    f'on port {self.port}')
                 self._fastapi_process = None
 
-            if (self._service_process
-                    and self._service_process.returncode is None):
-                self._service_process.terminate()
-                try:
-                    await asyncio.wait_for(
-                        self._service_process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    self._service_process.kill()
-                    await self._service_process.wait()
-                logger.info(f'ℹ️ Stopped handler {self.handler_id} '
-                            f'service process on port {self.port}')
+            if self._service_process and self._service_process.is_running:
+                await self._service_process.stop()
+                logger.info(
+                    f'ℹ️ Stopped handler subservice for {self.handler_id}')
                 self._service_process = None
+
             return self.port
+
         except Exception as e:
-            logger.error(
-                f'‼️ Error stopping handler {self.handler_id}: {e}')
-            logger.debug(f'{traceback.format_exc()}')
+            logger.error(f'‼️ Error stopping handler {self.handler_id}: {e}')
             self._fastapi_process = None
+            self._service_process = None
             return self.port
 
     @alru_cache(maxsize=1, ttl=300)
